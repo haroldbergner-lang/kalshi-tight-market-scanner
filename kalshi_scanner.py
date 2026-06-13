@@ -35,7 +35,7 @@ except ImportError:
 
 # ── API ──────────────────────────────────────────────────────────────────────
 
-API_BASE = "https://api.kalshi.com/trade-api/v2"
+API_BASE = "https://external-api.kalshi.com/trade-api/v2"
 PAGE_LIMIT = 200
 REQUEST_DELAY = 0.15  # seconds between pages
 
@@ -136,7 +136,7 @@ def fetch_all_markets(verbose: bool = True) -> list[dict]:
             params["cursor"] = cursor
 
         try:
-            path = "/trade-api/v2/markets"
+            path = "/trade-api/v2/markets"  # path used for RSA signature, must match URL path
             headers = _auth_headers("GET", path)
             resp = requests.get(f"{API_BASE}/markets", params=params, headers=headers, timeout=30)
             resp.raise_for_status()
