@@ -1,0 +1,48 @@
+name: Kalshi Market Scan
+
+on:
+  workflow_dispatch:  # run manually from GitHub Actions tab
+  schedule:
+    - cron: "0 */6 * * *"  # also runs every 6 hours automatically
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run scanner (all views, export CSV)
+        run: |
+          python3 kalshi_scanner.py \
+            --max-spread 5 \
+            --min-volume 100 \
+            --rows 100 \
+            --export kalshi_results.csv \
+            2>&1 | tee scan_output.txt
+
+      - name: Run interesting-only view
+        run: |
+          python3 kalshi_scanner.py \
+            --max-spread 5 \
+            --min-volume 100 \
+            --interesting-only \
+            --exclude-modelable \
+            --rows 100 \
+            2>&1 | tee interesting_output.txt
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: kalshi-scan-${{ github.run_number }}
+          path: |
+            kalshi_results.csv
+            scan_output.txt
+            interesting_output.txt
+          retention-days: 7
