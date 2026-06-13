@@ -129,7 +129,7 @@ MODELABLE_CATEGORIES: set[str] = {"Sports"}
 SKIP_CATEGORIES: set[str] = {"Sports"}
 
 
-def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CATEGORIES) -> list[dict]:
+def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CATEGORIES, max_pages: Optional[int] = None) -> list[dict]:
     """Paginate through all open Kalshi markets and return raw API records."""
     markets: list[dict] = []
     cursor: Optional[str] = None
@@ -170,6 +170,9 @@ def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CAT
 
         cursor = data.get("cursor")
         if not cursor or not data.get("markets"):
+            break
+        if max_pages and page >= max_pages:
+            print(f"  Stopped at page limit ({max_pages})", file=sys.stderr)
             break
 
         time.sleep(REQUEST_DELAY)
@@ -454,6 +457,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-sports", action="store_true",
         help="Include Sports category markets (excluded by default — very large volume)",
     )
+    p.add_argument(
+        "--max-pages", type=int, metavar="N",
+        help="Stop fetching after N pages (200 markets/page) — useful for quick scans",
+    )
     return p
 
 
@@ -462,7 +469,7 @@ def main() -> None:
 
     skip = SKIP_CATEGORIES if not args.include_sports else set()
     print("Fetching Kalshi markets…", file=sys.stderr)
-    raw_markets = fetch_all_markets(verbose=True, skip_categories=skip)
+    raw_markets = fetch_all_markets(verbose=True, skip_categories=skip, max_pages=args.max_pages)
     print(f"\nTotal kept: {len(raw_markets):,}", file=sys.stderr)
 
     # Compute metrics and drop markets without valid quotes
