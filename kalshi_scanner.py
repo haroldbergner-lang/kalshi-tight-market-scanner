@@ -124,11 +124,17 @@ MODELABLE_CATEGORIES: set[str] = {"Sports"}
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
 
-def fetch_all_markets(verbose: bool = True) -> list[dict]:
+# Kalshi category strings to skip entirely during fetch (saves time + memory).
+# These contain player props, game lines, and other high-volume sports contracts.
+SKIP_CATEGORIES: set[str] = {"Sports"}
+
+
+def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CATEGORIES) -> list[dict]:
     """Paginate through all open Kalshi markets and return raw API records."""
     markets: list[dict] = []
     cursor: Optional[str] = None
     page = 0
+    skipped = 0
 
     while True:
         params: dict = {"limit": PAGE_LIMIT, "status": "open"}
@@ -146,17 +152,24 @@ def fetch_all_markets(verbose: bool = True) -> list[dict]:
 
         data = resp.json()
         batch = data.get("markets", [])
+
+        # Drop skipped categories early to avoid processing thousands of sports contracts
+        if skip_categories:
+            before = len(batch)
+            batch = [m for m in batch if m.get("category", "") not in skip_categories]
+            skipped += before - len(batch)
+
         markets.extend(batch)
         page += 1
 
         if verbose:
             print(
-                f"  Page {page:>3}: {len(batch):>3} markets  (running total: {len(markets):,})",
+                f"  Page {page:>3}: {len(batch):>3} kept  (total kept: {len(markets):,}  skipped: {skipped:,})",
                 file=sys.stderr,
             )
 
         cursor = data.get("cursor")
-        if not cursor or not batch:
+        if not cursor or not data.get("markets"):
             break
 
         time.sleep(REQUEST_DELAY)
@@ -437,15 +450,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--all", action="store_true",
         help="Disable the default spread filter (show all valid markets)",
     )
+    p.add_argument(
+        "--include-sports", action="store_true",
+        help="Include Sports category markets (excluded by default — very large volume)",
+    )
     return p
 
 
 def main() -> None:
     args = build_parser().parse_args()
 
+    skip = SKIP_CATEGORIES if not args.include_sports else set()
     print("Fetching Kalshi markets…", file=sys.stderr)
-    raw_markets = fetch_all_markets(verbose=True)
-    print(f"\nTotal raw markets fetched: {len(raw_markets):,}", file=sys.stderr)
+    raw_markets = fetch_all_markets(verbose=True, skip_categories=skip)
+    print(f"\nTotal kept: {len(raw_markets):,}", file=sys.stderr)
 
     # Compute metrics and drop markets without valid quotes
     markets = [m for r in raw_markets if (m := compute_metrics(r)) is not None]
