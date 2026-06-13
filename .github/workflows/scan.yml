@@ -19,6 +19,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run scanner (all views, export CSV)
+        env:
+          KALSHI_PRIVATE_KEY: ${{ secrets.KALSHI_PRIVATE_KEY }}
         run: |
           python3 kalshi_scanner.py \
             --max-spread 5 \
@@ -28,6 +30,8 @@ jobs:
             2>&1 | tee scan_output.txt
 
       - name: Run interesting-only view
+        env:
+          KALSHI_PRIVATE_KEY: ${{ secrets.KALSHI_PRIVATE_KEY }}
         run: |
           python3 kalshi_scanner.py \
             --max-spread 5 \

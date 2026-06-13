@@ -12,13 +12,17 @@ Usage:
 """
 
 import argparse
+import base64
 import csv
+import os
 import sys
 import time
 from datetime import datetime, timezone
 from typing import Optional
 
 import requests
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 try:
     from rich.console import Console
@@ -34,6 +38,37 @@ except ImportError:
 API_BASE = "https://api.kalshi.com/trade-api/v2"
 PAGE_LIMIT = 200
 REQUEST_DELAY = 0.15  # seconds between pages
+
+KALSHI_KEY_ID = "55e7d77e-2965-49ca-af94-9835343e83ca"
+
+
+def _load_private_key():
+    raw = os.environ.get("KALSHI_PRIVATE_KEY", "")
+    if not raw:
+        return None
+    pem = raw.encode()
+    # GitHub secrets collapse newlines; restore them if needed
+    if b"\\n" in pem:
+        pem = pem.replace(b"\\n", b"\n")
+    try:
+        return serialization.load_pem_private_key(pem, password=None)
+    except Exception as e:
+        print(f"Failed to load private key: {e}", file=sys.stderr)
+        return None
+
+
+def _auth_headers(method: str, path: str) -> dict:
+    key = _load_private_key()
+    if key is None:
+        return {}
+    ts_ms = str(int(time.time() * 1000))
+    msg = (ts_ms + method.upper() + path).encode()
+    sig = key.sign(msg, padding.PKCS1v15(), hashes.SHA256())
+    return {
+        "KALSHI-ACCESS-KEY": KALSHI_KEY_ID,
+        "KALSHI-ACCESS-TIMESTAMP": ts_ms,
+        "KALSHI-ACCESS-SIGNATURE": base64.b64encode(sig).decode(),
+    }
 
 # ── Category definitions ─────────────────────────────────────────────────────
 # Matched against lowercased "title + subtitle" of each market.
@@ -101,7 +136,9 @@ def fetch_all_markets(verbose: bool = True) -> list[dict]:
             params["cursor"] = cursor
 
         try:
-            resp = requests.get(f"{API_BASE}/markets", params=params, timeout=30)
+            path = "/trade-api/v2/markets"
+            headers = _auth_headers("GET", path)
+            resp = requests.get(f"{API_BASE}/markets", params=params, headers=headers, timeout=30)
             resp.raise_for_status()
         except requests.RequestException as e:
             print(f"API error: {e}", file=sys.stderr)
