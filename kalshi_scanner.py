@@ -455,12 +455,12 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument(
-        "--max-spread", type=int, default=5, metavar="CENTS",
-        help="Max spread in cents (default: 5)",
+        "--max-spread", type=int, default=1, metavar="CENTS",
+        help="Max spread in cents (default: 1)",
     )
     p.add_argument(
-        "--min-volume", type=int, default=100, metavar="N",
-        help="Min cumulative volume (default: 100)",
+        "--min-volume", type=int, default=5000, metavar="N",
+        help="Min cumulative volume in contracts traded (default: 5000)",
     )
     p.add_argument(
         "--min-oi", type=int, default=0, metavar="N",

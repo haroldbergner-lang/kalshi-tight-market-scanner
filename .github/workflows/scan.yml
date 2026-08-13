@@ -23,8 +23,8 @@ jobs:
           KALSHI_PRIVATE_KEY: ${{ secrets.KALSHI_PRIVATE_KEY }}
         run: |
           python3 kalshi_scanner.py \
-            --max-spread 5 \
-            --min-volume 100 \
+            --max-spread 1 \
+            --min-volume 5000 \
             --rows 100 \
             --export kalshi_results.csv \
             2>&1 | tee scan_output.txt
@@ -34,8 +34,8 @@ jobs:
           KALSHI_PRIVATE_KEY: ${{ secrets.KALSHI_PRIVATE_KEY }}
         run: |
           python3 kalshi_scanner.py \
-            --max-spread 5 \
-            --min-volume 100 \
+            --max-spread 1 \
+            --min-volume 5000 \
             --interesting-only \
             --exclude-modelable \
             --rows 100 \
