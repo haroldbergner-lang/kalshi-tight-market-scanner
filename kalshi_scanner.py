@@ -123,6 +123,10 @@ MODELABLE_CATEGORIES: set[str] = {"Sports"}
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
+# As of the API's dollar-denominated schema, per-market category/subtitle were
+# removed from GET /markets. Category now lives on the parent event, so we
+# fetch GET /events?with_nested_markets=true and flatten each event's markets,
+# stamping the event's category/title/sub_title onto every child market.
 
 # Kalshi category strings to skip entirely during fetch (saves time + memory).
 # These contain player props, game lines, and other high-volume sports contracts.
@@ -130,46 +134,54 @@ SKIP_CATEGORIES: set[str] = {"Sports"}
 
 
 def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CATEGORIES, max_pages: Optional[int] = None) -> list[dict]:
-    """Paginate through all open Kalshi markets and return raw API records."""
+    """Paginate through all open Kalshi events, flatten nested markets, and return raw API records."""
     markets: list[dict] = []
     cursor: Optional[str] = None
     page = 0
     skipped = 0
 
     while True:
-        params: dict = {"limit": PAGE_LIMIT, "status": "open"}
+        params: dict = {"limit": PAGE_LIMIT, "status": "open", "with_nested_markets": "true"}
         if cursor:
             params["cursor"] = cursor
 
         try:
-            path = "/trade-api/v2/markets"  # path used for RSA signature, must match URL path
+            path = "/trade-api/v2/events"  # path used for RSA signature, must match URL path
             headers = _auth_headers("GET", path)
-            resp = requests.get(f"{API_BASE}/markets", params=params, headers=headers, timeout=30)
+            resp = requests.get(f"{API_BASE}/events", params=params, headers=headers, timeout=30)
             resp.raise_for_status()
         except requests.RequestException as e:
             print(f"API error: {e}", file=sys.stderr)
             break
 
         data = resp.json()
-        batch = data.get("markets", [])
+        events = data.get("events", [])
 
-        # Drop skipped categories early to avoid processing thousands of sports contracts
-        if skip_categories:
-            before = len(batch)
-            batch = [m for m in batch if m.get("category", "") not in skip_categories]
-            skipped += before - len(batch)
+        kept: list[dict] = []
+        for event in events:
+            category = event.get("category", "")
+            nested = event.get("markets", [])
+            if skip_categories and category in skip_categories:
+                skipped += len(nested)
+                continue
+            for m in nested:
+                m = dict(m)
+                m["category"] = category
+                m["_event_title"] = event.get("title", "")
+                m["_event_sub_title"] = event.get("sub_title", "")
+                kept.append(m)
 
-        markets.extend(batch)
+        markets.extend(kept)
         page += 1
 
         if verbose:
             print(
-                f"  Page {page:>3}: {len(batch):>3} kept  (total kept: {len(markets):,}  skipped: {skipped:,})",
+                f"  Page {page:>3}: {len(kept):>3} kept  (total kept: {len(markets):,}  skipped: {skipped:,})",
                 file=sys.stderr,
             )
 
         cursor = data.get("cursor")
-        if not cursor or not data.get("markets"):
+        if not cursor or not events:
             break
         if max_pages and page >= max_pages:
             print(f"  Stopped at page limit ({max_pages})", file=sys.stderr)
@@ -183,13 +195,26 @@ def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CAT
 # ── Metric computation ────────────────────────────────────────────────────────
 
 
+def _dollars_to_cents(value) -> Optional[float]:
+    """Convert a Kalshi '*_dollars' price string (e.g. '0.1400') to cents."""
+    if value is None:
+        return None
+    try:
+        return round(float(value) * 100, 2)
+    except (TypeError, ValueError):
+        return None
+
+
 def compute_metrics(raw: dict) -> Optional[dict]:
     """
     Derive trading and classification metrics from a raw Kalshi market record.
     Returns None for markets without valid two-sided quotes.
     """
-    yes_bid = raw.get("yes_bid")
-    yes_ask = raw.get("yes_ask")
+    if raw.get("status") != "active":
+        return None
+
+    yes_bid = _dollars_to_cents(raw.get("yes_bid_dollars"))
+    yes_ask = _dollars_to_cents(raw.get("yes_ask_dollars"))
 
     # Require a valid, non-crossed two-sided market
     if yes_bid is None or yes_ask is None:
@@ -197,7 +222,7 @@ def compute_metrics(raw: dict) -> Optional[dict]:
     if yes_bid <= 0 or yes_ask <= 0 or yes_ask < yes_bid:
         return None
 
-    spread = yes_ask - yes_bid
+    spread = round(yes_ask - yes_bid, 2)
     midpoint = (yes_bid + yes_ask) / 2
     # Relative spread normalizes for price level.
     # A 2¢ spread on a 5¢ market (40%) differs enormously from 2¢ on a 50¢ market (4%).
@@ -213,11 +238,23 @@ def compute_metrics(raw: dict) -> Optional[dict]:
         days_to_exp = None
         close_date = ""
 
-    # Build a searchable title blob
-    title = raw.get("title", "")
-    subtitle = raw.get("subtitle", "")
-    display_title = title + (" — " + subtitle if subtitle else "")
-    title_blob = (title + " " + subtitle).lower()
+    # The market's own title is already fully specified (e.g. "Will X win the
+    # election?"), unlike the old schema where subtitle carried the specific
+    # instance. Fold in the parent event's title/sub_title and the per-side
+    # sub-titles for keyword matching, since a candidate's name may only
+    # appear there.
+    title = raw.get("title", "") or raw.get("_event_title", "")
+    subtitle = raw.get("subtitle") or raw.get("yes_sub_title") or ""
+    display_title = title
+    title_blob = " ".join(
+        str(x) for x in (
+            title,
+            subtitle,
+            raw.get("no_sub_title", ""),
+            raw.get("_event_title", ""),
+            raw.get("_event_sub_title", ""),
+        ) if x
+    ).lower()
 
     # Categorize by keyword matching
     flags: list[str] = [
@@ -236,6 +273,10 @@ def compute_metrics(raw: dict) -> Optional[dict]:
     ticker = raw.get("ticker", "")
     url = f"https://kalshi.com/markets/{event_ticker}/{ticker}"
 
+    volume = int(round(float(raw.get("volume_fp", 0) or 0)))
+    volume_24h = int(round(float(raw.get("volume_24h_fp", 0) or 0)))
+    open_interest = int(round(float(raw.get("open_interest_fp", 0) or 0)))
+
     return {
         "ticker": ticker,
         "title": display_title[:90],
@@ -245,9 +286,9 @@ def compute_metrics(raw: dict) -> Optional[dict]:
         "spread": spread,
         "midpoint": round(midpoint, 1),
         "relative_spread": relative_spread,
-        "volume": raw.get("volume", 0) or 0,
-        "volume_24h": raw.get("volume_24h", 0) or 0,
-        "open_interest": raw.get("open_interest", 0) or 0,
+        "volume": volume,
+        "volume_24h": volume_24h,
+        "open_interest": open_interest,
         "days_to_exp": days_to_exp,
         "close_date": close_date,
         "flags": flags,
@@ -295,7 +336,14 @@ def apply_filters(
 # ── Display ───────────────────────────────────────────────────────────────────
 
 
-def _spread_color(spread: int) -> str:
+def _fmt_cents(value: float) -> str:
+    """Render a cents value without a noisy '.0' for whole numbers (sub-cent granularity exists)."""
+    if value == int(value):
+        return f"{int(value)}¢"
+    return f"{value:.1f}¢"
+
+
+def _spread_color(spread: float) -> str:
     if spread <= 1:
         return "bright_green"
     if spread <= 3:
@@ -337,11 +385,11 @@ def display_rich_table(markets: list[dict], title: str, max_rows: int) -> None:
         exp_str = m["close_date"] if days is None else f"{m['close_date']} ({days}d)"
 
         table.add_row(
-            Text(f"{m['spread']}¢", style=color),
+            Text(_fmt_cents(m['spread']), style=color),
             rel,
-            f"{m['midpoint']}¢",
-            f"{m['yes_bid']}¢",
-            f"{m['yes_ask']}¢",
+            _fmt_cents(m['midpoint']),
+            _fmt_cents(m['yes_bid']),
+            _fmt_cents(m['yes_ask']),
             f"{m['volume']:,}",
             f"{m['open_interest']:,}",
             exp_str,
@@ -366,7 +414,8 @@ def display_plain_table(markets: list[dict], title: str, max_rows: int) -> None:
         flags = "|".join(m["flags"]) if m["flags"] else ""
         modelable = "(~)" if m["is_modelable"] else "   "
         print(
-            f"{m['spread']:>3}¢ {m['midpoint']:>5} {m['yes_bid']:>4} {m['yes_ask']:>4}"
+            f"{_fmt_cents(m['spread']):>4} {_fmt_cents(m['midpoint']):>5} "
+            f"{_fmt_cents(m['yes_bid']):>4} {_fmt_cents(m['yes_ask']):>4}"
             f" {m['volume']:>9,} {m['open_interest']:>9,} {m['close_date']:>10}"
             f"  {modelable} {m['title'][:60]:<60}  {flags}"
         )
