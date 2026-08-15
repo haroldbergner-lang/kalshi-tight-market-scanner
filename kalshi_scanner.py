@@ -863,6 +863,12 @@ __CATEGORY_CHECKBOXES__
     <label><input type="radio" name="volume" value="100000" /> ≥100K</label>
     <label><input type="radio" name="volume" value="500000" /> ≥500K</label>
   </div>
+  <div class="filter-group" id="closesFilters">
+    <span class="group-label">Closes</span>
+    <label><input type="radio" name="closes" value="within" checked /> Within 1 year</label>
+    <label><input type="radio" name="closes" value="beyond" /> Beyond 1 year</label>
+    <label><input type="radio" name="closes" value="any" /> Any</label>
+  </div>
   <div class="filter-group">
     <span id="showingCount"></span>
   </div>
@@ -937,6 +943,7 @@ __TABLE_ROWS__
   var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('#categoryFilters input[type=checkbox]'));
   var spreadRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=spread]'));
   var volumeRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=volume]'));
+  var closesRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=closes]'));
 
   function checkedValues(boxes) {
     var set = {};
@@ -949,22 +956,33 @@ __TABLE_ROWS__
     return picked ? parseFloat(picked.value) : Infinity;
   }
 
+  function checkedString(radios) {
+    var picked = radios.filter(function (r) { return r.checked; })[0];
+    return picked ? picked.value : 'any';
+  }
+
   function applyToggles() {
     var cats = checkedValues(categoryBoxes);
     var maxSpread = checkedNumber(spreadRadios);
     var minVolume = checkedNumber(volumeRadios);
+    var closesWindow = checkedString(closesRadios);
     var visible = 0;
     Array.prototype.forEach.call(tbody.rows, function (r) {
+      var closesDays = parseFloat(r.getAttribute('data-closes'));
+      var closesOk = closesWindow === 'any'
+        || (closesWindow === 'within' && closesDays <= 365)
+        || (closesWindow === 'beyond' && closesDays > 365);
       var show = cats[r.getAttribute('data-category')]
         && parseFloat(r.getAttribute('data-spread')) <= maxSpread
-        && parseFloat(r.getAttribute('data-volume')) >= minVolume;
+        && parseFloat(r.getAttribute('data-volume')) >= minVolume
+        && closesOk;
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
     showingCount.textContent = 'Showing ' + visible.toLocaleString() + ' of ' + totalRows.toLocaleString();
   }
 
-  categoryBoxes.concat(spreadRadios, volumeRadios).forEach(function (b) {
+  categoryBoxes.concat(spreadRadios, volumeRadios, closesRadios).forEach(function (b) {
     b.addEventListener('change', applyToggles);
   });
   applyToggles();

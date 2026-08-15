@@ -36,7 +36,6 @@ jobs:
             --max-spread 10 \
             --max-relative-spread 10 \
             --min-volume 5000 \
-            --max-days 365 \
             --max-price 98 \
             --rows 100 \
             --export-html kalshi_dashboard.html \
