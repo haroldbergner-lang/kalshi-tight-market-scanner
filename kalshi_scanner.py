@@ -175,6 +175,7 @@ def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CAT
                 m["category"] = category
                 m["_event_title"] = event.get("title", "")
                 m["_event_sub_title"] = event.get("sub_title", "")
+                m["_series_ticker"] = event.get("series_ticker", "")
                 kept.append(m)
 
         markets.extend(kept)
@@ -287,7 +288,12 @@ def compute_metrics(raw: dict) -> Optional[dict]:
 
     event_ticker = raw.get("event_ticker", "")
     ticker = raw.get("ticker", "")
-    url = f"https://kalshi.com/markets/{event_ticker}/{ticker}"
+    # Kalshi's real market URLs are /markets/{series_ticker}/{seo-slug}/{event_ticker},
+    # but the SEO slug isn't exposed anywhere in the public API, so a two-segment
+    # {event_ticker}/{ticker} guess 404s. Link to the series page instead — that
+    # always resolves, even though it's one click short of the exact contract.
+    series_ticker = raw.get("_series_ticker") or event_ticker
+    url = f"https://kalshi.com/markets/{series_ticker.lower()}"
 
     volume = int(round(float(raw.get("volume_fp", 0) or 0)))
     volume_24h = int(round(float(raw.get("volume_24h_fp", 0) or 0)))
