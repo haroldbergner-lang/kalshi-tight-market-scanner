@@ -603,13 +603,70 @@ body {
 }
 
 .filters {
-  padding: 0 clamp(16px, 4vw, 40px) 20px;
+  padding: 0 clamp(16px, 4vw, 40px) 12px;
   font-family: var(--font-mono);
   font-size: 12px;
   color: var(--text-muted);
 }
 
 .filters b { color: var(--text); font-weight: 500; }
+
+.toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  padding: 0 clamp(16px, 4vw, 40px) 18px;
+  font-size: 13px;
+}
+
+.toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggles input[type="checkbox"] {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.toggles input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggles input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid var(--accent-ink);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.toggles input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+#showingCount {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
 
 .table-wrap {
   overflow-x: auto;
@@ -740,6 +797,12 @@ __STAT_TILES__
 
 <div class="filters">__FILTER_SUMMARY__</div>
 
+<div class="toggles">
+  <label><input type="checkbox" id="toggleInteresting" /> Flagged interesting only</label>
+  <label><input type="checkbox" id="toggleModelable" /> Exclude modelable</label>
+  <span id="showingCount"></span>
+</div>
+
 <div class="table-wrap">
 <table id="dash">
   <thead>
@@ -803,6 +866,29 @@ __TABLE_ROWS__
 
   applySort('open_ts', -1, 'num');
   ths[0].classList.add('sorted');
+
+  var toggleInteresting = document.getElementById('toggleInteresting');
+  var toggleModelable = document.getElementById('toggleModelable');
+  var showingCount = document.getElementById('showingCount');
+  var totalRows = tbody.rows.length;
+
+  function applyToggles() {
+    var wantInteresting = toggleInteresting.checked;
+    var wantExcludeModelable = toggleModelable.checked;
+    var visible = 0;
+    Array.prototype.forEach.call(tbody.rows, function (r) {
+      var show = true;
+      if (wantInteresting && r.getAttribute('data-flags') !== '1') show = false;
+      if (wantExcludeModelable && r.getAttribute('data-modelable') === '1') show = false;
+      r.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    showingCount.textContent = 'Showing ' + visible.toLocaleString() + ' of ' + totalRows.toLocaleString();
+  }
+
+  toggleInteresting.addEventListener('change', applyToggles);
+  toggleModelable.addEventListener('change', applyToggles);
+  applyToggles();
 })();
 </script>
 </body>
@@ -854,7 +940,9 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'data-ask="{m["yes_ask"]}" '
             f'data-volume="{m["volume"]}" '
             f'data-oi="{m["open_interest"]}" '
-            f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}"'
+            f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}" '
+            f'data-flags="{1 if m["flags"] else 0}" '
+            f'data-modelable="{1 if m["is_modelable"] else 0}"'
             ">\n"
             f'      <td class="mono">{open_str}</td>\n'
             f'      <td class="market"><a href="{url_esc}" target="_blank" rel="noopener">{title_esc}</a>{modelable}'

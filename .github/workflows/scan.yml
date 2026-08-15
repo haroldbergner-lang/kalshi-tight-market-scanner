@@ -5,6 +5,16 @@ on:
   schedule:
     - cron: "0 */6 * * *"  # also runs every 6 hours automatically
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deployment at a time; let the latest run win rather than queueing stale ones.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -18,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run scanner (all views, export dashboard)
+      - name: Run scanner, export dashboard
         env:
           KALSHI_PRIVATE_KEY: ${{ secrets.KALSHI_PRIVATE_KEY }}
         run: |
@@ -31,28 +41,32 @@ jobs:
             --export-html kalshi_dashboard.html \
             2>&1 | tee scan_output.txt
 
-      - name: Run interesting-only view
-        env:
-          KALSHI_PRIVATE_KEY: ${{ secrets.KALSHI_PRIVATE_KEY }}
-        run: |
-          python3 kalshi_scanner.py \
-            --max-spread 1 \
-            --max-relative-spread 10 \
-            --min-volume 5000 \
-            --max-days 365 \
-            --interesting-only \
-            --exclude-modelable \
-            --rows 100 \
-            --export-html kalshi_dashboard_interesting.html \
-            2>&1 | tee interesting_output.txt
-
-      - name: Upload results
+      - name: Upload scan log artifact
         uses: actions/upload-artifact@v4
         with:
           name: kalshi-scan-${{ github.run_number }}
           path: |
             kalshi_dashboard.html
-            kalshi_dashboard_interesting.html
             scan_output.txt
-            interesting_output.txt
           retention-days: 7
+
+      - name: Prepare Pages site
+        run: |
+          mkdir -p _site
+          cp kalshi_dashboard.html _site/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: scan
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
