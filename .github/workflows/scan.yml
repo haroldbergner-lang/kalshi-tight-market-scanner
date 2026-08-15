@@ -37,6 +37,7 @@ jobs:
             --max-relative-spread 10 \
             --min-volume 5000 \
             --max-days 365 \
+            --max-price 98 \
             --rows 100 \
             --export-html kalshi_dashboard.html \
             2>&1 | tee scan_output.txt

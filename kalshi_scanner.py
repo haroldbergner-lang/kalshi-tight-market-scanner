@@ -134,7 +134,8 @@ MODELABLE_CATEGORIES: set[str] = {"Sports"}
 # Sports: player props, game lines, and other high-volume sports contracts.
 # Crypto: rolling 15-minute/hourly price-direction markets, extremely high churn.
 # Climate and Weather: established forecasting models exist, low signal here.
-SKIP_CATEGORIES: set[str] = {"Sports", "Crypto", "Climate and Weather"}
+# Mentions: "will X say Y" word-count markets, low signal.
+SKIP_CATEGORIES: set[str] = {"Sports", "Crypto", "Climate and Weather", "Mentions"}
 
 
 def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CATEGORIES, max_pages: Optional[int] = None) -> list[dict]:
@@ -324,6 +325,8 @@ def apply_filters(
     min_open_interest: Optional[int],
     max_days: Optional[int],
     min_days: Optional[int],
+    min_price: Optional[float],
+    max_price: Optional[float],
     category: Optional[str],
     interesting_only: bool,
     exclude_modelable: bool,
@@ -343,6 +346,10 @@ def apply_filters(
         if max_days is not None and m["days_to_exp"] is not None and m["days_to_exp"] > max_days:
             continue
         if min_days is not None and m["days_to_exp"] is not None and m["days_to_exp"] < min_days:
+            continue
+        if min_price is not None and m["midpoint"] < min_price:
+            continue
+        if max_price is not None and m["midpoint"] > max_price:
             continue
         if category and category.lower() not in (m["category"] or "").lower():
             continue
@@ -1010,6 +1017,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Min days until market closes",
     )
     p.add_argument(
+        "--min-price", type=float, metavar="CENTS",
+        help="Min midpoint price in cents (excludes near-zero/already-resolved markets)",
+    )
+    p.add_argument(
+        "--max-price", type=float, metavar="CENTS",
+        help="Max midpoint price in cents (excludes near-certain/already-resolved markets, e.g. 98 drops 99-100c)",
+    )
+    p.add_argument(
         "--category", type=str, metavar="NAME",
         help="Filter by Kalshi category string (substring match)",
     )
@@ -1054,6 +1069,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include Climate and Weather category markets (excluded by default)",
     )
     p.add_argument(
+        "--include-mentions", action="store_true",
+        help="Include Mentions category markets (excluded by default — low signal)",
+    )
+    p.add_argument(
         "--max-pages", type=int, metavar="N",
         help="Stop fetching after N pages (200 markets/page) — useful for quick scans",
     )
@@ -1070,6 +1089,8 @@ def main() -> None:
         skip.discard("Crypto")
     if args.include_weather:
         skip.discard("Climate and Weather")
+    if args.include_mentions:
+        skip.discard("Mentions")
     print("Fetching Kalshi markets…", file=sys.stderr)
     raw_markets = fetch_all_markets(verbose=True, skip_categories=skip, max_pages=args.max_pages)
     print(f"\nTotal kept: {len(raw_markets):,}", file=sys.stderr)
@@ -1093,6 +1114,8 @@ def main() -> None:
         min_open_interest=args.min_oi,
         max_days=args.max_days,
         min_days=args.min_days,
+        min_price=args.min_price,
+        max_price=args.max_price,
         category=args.category,
         interesting_only=args.interesting_only,
         exclude_modelable=args.exclude_modelable,
@@ -1133,6 +1156,10 @@ def main() -> None:
             filter_bits.append(f"closes within {args.max_days}d")
         if args.min_days is not None:
             filter_bits.append(f"closes after {args.min_days}d")
+        if args.min_price is not None:
+            filter_bits.append(f"price ≥ {args.min_price:g}¢")
+        if args.max_price is not None:
+            filter_bits.append(f"price ≤ {args.max_price:g}¢")
         if args.category:
             filter_bits.append(f"category ~ {args.category!r}")
         if args.interesting_only:
