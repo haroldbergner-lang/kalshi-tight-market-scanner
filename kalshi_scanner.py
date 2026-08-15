@@ -14,10 +14,12 @@ Usage:
 import argparse
 import base64
 import csv
+import html
 import os
 import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -238,6 +240,16 @@ def compute_metrics(raw: dict) -> Optional[dict]:
         days_to_exp = None
         close_date = ""
 
+    # When the market opened for trading (used to sort newest-listed-first).
+    open_str = raw.get("open_time", "")
+    try:
+        open_dt = datetime.fromisoformat(open_str.replace("Z", "+00:00"))
+        open_date = open_dt.strftime("%Y-%m-%d")
+        open_timestamp = open_dt.timestamp()
+    except Exception:
+        open_date = ""
+        open_timestamp = 0
+
     # The market's own title is already fully specified (e.g. "Will X win the
     # election?"), unlike the old schema where subtitle carried the specific
     # instance. Fold in the parent event's title/sub_title and the per-side
@@ -291,6 +303,8 @@ def compute_metrics(raw: dict) -> Optional[dict]:
         "open_interest": open_interest,
         "days_to_exp": days_to_exp,
         "close_date": close_date,
+        "open_date": open_date,
+        "open_timestamp": open_timestamp,
         "flags": flags,
         "is_modelable": is_modelable,
         "url": url,
@@ -451,6 +465,439 @@ def export_csv(markets: list[dict], path: str) -> None:
     print(f"\nExported {len(markets):,} markets → {path}")
 
 
+# ── HTML dashboard export ────────────────────────────────────────────────────
+
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+_DASHBOARD_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>__TITLE__</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+__FONT_CSS__
+
+:root {
+  --bg: #f2f4f6;
+  --surface: #ffffff;
+  --surface-2: #e7eaef;
+  --text: #14213d;
+  --text-muted: #5b6478;
+  --border: #d8dce3;
+  --accent: #a8701f;
+  --accent-ink: #ffffff;
+  --tight: #1e8e5a;
+  --mid: #a8701f;
+  --wide: #b5442e;
+  --row-hover: #eef1f5;
+  --font-display: 'Big Shoulders Display', 'Arial Narrow', sans-serif;
+  --font-body: 'IBM Plex Sans', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1220;
+    --surface: #121b2e;
+    --surface-2: #1a2540;
+    --text: #e9ecf1;
+    --text-muted: #8d96ac;
+    --border: #263252;
+    --accent: #e8a33d;
+    --accent-ink: #1a1204;
+    --tight: #4ade80;
+    --mid: #e8a33d;
+    --wide: #ff6b57;
+    --row-hover: #17213a;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0b1220;
+  --surface: #121b2e;
+  --surface-2: #1a2540;
+  --text: #e9ecf1;
+  --text-muted: #8d96ac;
+  --border: #263252;
+  --accent: #e8a33d;
+  --accent-ink: #1a1204;
+  --tight: #4ade80;
+  --mid: #e8a33d;
+  --wide: #ff6b57;
+  --row-hover: #17213a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.masthead {
+  padding: 28px clamp(16px, 4vw, 40px) 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px 32px;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(28px, 4vw, 40px);
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.wordmark span {
+  color: var(--accent);
+}
+
+.meta {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 18px clamp(16px, 4vw, 40px);
+}
+
+.stat {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 10px 16px;
+  min-width: 108px;
+}
+
+.stat .n {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+  display: block;
+}
+
+.stat .l {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.filters {
+  padding: 0 clamp(16px, 4vw, 40px) 20px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.filters b { color: var(--text); font-weight: 500; }
+
+.table-wrap {
+  overflow-x: auto;
+  padding: 0 clamp(16px, 4vw, 40px) 40px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1080px;
+  background: var(--surface);
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+thead th:hover { color: var(--text); }
+
+thead th .arrow { opacity: 0; margin-left: 4px; font-size: 9px; }
+thead th.sorted .arrow { opacity: 1; color: var(--accent); }
+
+th.num, td.num { text-align: right; }
+
+tbody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+tbody tr:hover { background: var(--row-hover); }
+
+td.market {
+  white-space: normal;
+  min-width: 260px;
+}
+
+td.market a {
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+td.market a:hover { color: var(--accent); text-decoration: underline; }
+
+td.market a:focus-visible, thead th:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ticker {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.modelable {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0 4px;
+  vertical-align: middle;
+}
+
+.num, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+.pill {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.pill.tight { color: var(--tight); background: color-mix(in srgb, var(--tight) 16%, transparent); }
+.pill.mid { color: var(--mid); background: color-mix(in srgb, var(--mid) 16%, transparent); }
+.pill.wide { color: var(--wide); background: color-mix(in srgb, var(--wide) 16%, transparent); }
+
+.cat {
+  color: var(--text-muted);
+}
+
+.flags {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+footer {
+  padding: 20px clamp(16px, 4vw, 40px) 40px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  tbody tr { transition: background-color 120ms ease; }
+}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <h1 class="wordmark">Kalshi <span>Tight</span> Market Scanner</h1>
+  <div class="meta">Generated __GENERATED_AT__ UTC<br />Sorted by listing date, newest first</div>
+</header>
+
+<div class="stats">
+__STAT_TILES__
+</div>
+
+<div class="filters">__FILTER_SUMMARY__</div>
+
+<div class="table-wrap">
+<table id="dash">
+  <thead>
+    <tr>
+      <th data-type="num" data-key="open_ts">Listed<span class="arrow">▼</span></th>
+      <th data-type="text" data-key="market">Market<span class="arrow">▼</span></th>
+      <th data-type="text" data-key="category">Category<span class="arrow">▼</span></th>
+      <th class="num" data-type="num" data-key="spread">Spread<span class="arrow">▼</span></th>
+      <th class="num" data-type="num" data-key="rel">Rel %<span class="arrow">▼</span></th>
+      <th class="num" data-type="num" data-key="bid">Bid<span class="arrow">▼</span></th>
+      <th class="num" data-type="num" data-key="ask">Ask<span class="arrow">▼</span></th>
+      <th class="num" data-type="num" data-key="volume">Volume<span class="arrow">▼</span></th>
+      <th class="num" data-type="num" data-key="oi">Open Int.<span class="arrow">▼</span></th>
+      <th data-type="num" data-key="closes">Closes<span class="arrow">▼</span></th>
+    </tr>
+  </thead>
+  <tbody>
+__TABLE_ROWS__
+  </tbody>
+</table>
+</div>
+
+<footer>kalshi_scanner.py · __ROW_COUNT__ markets · data from Kalshi public API · click any column to re-sort</footer>
+
+<script>
+(function () {
+  var table = document.getElementById('dash');
+  var tbody = table.tBodies[0];
+  var ths = table.querySelectorAll('thead th');
+  var state = { key: 'open_ts', dir: -1 };
+
+  function applySort(key, dir, type) {
+    var rows = Array.prototype.slice.call(tbody.rows);
+    rows.sort(function (a, b) {
+      var av = a.getAttribute('data-' + key);
+      var bv = b.getAttribute('data-' + key);
+      if (type === 'num') {
+        av = parseFloat(av); bv = parseFloat(bv);
+        return (av - bv) * dir;
+      }
+      return av.localeCompare(bv) * dir;
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+  }
+
+  ths.forEach(function (th) {
+    th.addEventListener('click', function () {
+      var key = th.getAttribute('data-key');
+      var type = th.getAttribute('data-type');
+      var dir = (state.key === key) ? -state.dir : (type === 'num' ? -1 : 1);
+      state = { key: key, dir: dir };
+      ths.forEach(function (t) {
+        t.classList.remove('sorted');
+        t.querySelector('.arrow').textContent = '▼';
+      });
+      th.classList.add('sorted');
+      th.querySelector('.arrow').textContent = dir === 1 ? '▲' : '▼';
+      applySort(key, dir, type);
+    });
+  });
+
+  applySort('open_ts', -1, 'num');
+  ths[0].classList.add('sorted');
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def _spread_pill_class(spread: float) -> str:
+    if spread <= 1:
+        return "tight"
+    if spread <= 5:
+        return "mid"
+    return "wide"
+
+
+def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
+    if not markets:
+        print("Nothing to export.")
+        return
+
+    try:
+        font_css = (_ASSETS_DIR / "fonts.css").read_text(encoding="utf-8")
+    except OSError:
+        font_css = ""
+
+    # Newest-listed-first by default; client-side JS lets the viewer re-sort.
+    rows_sorted = sorted(markets, key=lambda m: m.get("open_timestamp", 0), reverse=True)
+
+    row_html = []
+    for m in rows_sorted:
+        pill = _spread_pill_class(m["spread"])
+        rel = f"{m['relative_spread']*100:.1f}%" if m["relative_spread"] is not None else "—"
+        modelable = '<span class="modelable" title="Established models/data exist for this market">~</span>' if m["is_modelable"] else ""
+        flags_str = ", ".join(f.replace("_", " ") for f in m["flags"])
+        exp_str = f"{m['close_date']} ({m['days_to_exp']}d)" if m["days_to_exp"] is not None else m["close_date"]
+        open_str = m["open_date"] or "—"
+        title_esc = html.escape(m["title"])
+        ticker_esc = html.escape(m["ticker"])
+        url_esc = html.escape(m["url"], quote=True)
+
+        row_html.append(
+            "    <tr "
+            f'data-open_ts="{m.get("open_timestamp", 0)}" '
+            f'data-market="{html.escape(m["title"].lower())}" '
+            f'data-category="{html.escape((m["category"] or "").lower())}" '
+            f'data-spread="{m["spread"]}" '
+            f'data-rel="{m["relative_spread"] if m["relative_spread"] is not None else -1}" '
+            f'data-bid="{m["yes_bid"]}" '
+            f'data-ask="{m["yes_ask"]}" '
+            f'data-volume="{m["volume"]}" '
+            f'data-oi="{m["open_interest"]}" '
+            f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}"'
+            ">\n"
+            f'      <td class="mono">{open_str}</td>\n'
+            f'      <td class="market"><a href="{url_esc}" target="_blank" rel="noopener">{title_esc}</a>{modelable}'
+            f'<span class="ticker">{ticker_esc}'
+            + (f' · <span class="flags">{html.escape(flags_str)}</span>' if flags_str else "")
+            + "</span></td>\n"
+            f'      <td class="cat">{html.escape(m["category"] or "—")}</td>\n'
+            f'      <td class="num"><span class="pill {pill}">{_fmt_cents(m["spread"])}</span></td>\n'
+            f'      <td class="num mono">{rel}</td>\n'
+            f'      <td class="num mono">{_fmt_cents(m["yes_bid"])}</td>\n'
+            f'      <td class="num mono">{_fmt_cents(m["yes_ask"])}</td>\n'
+            f'      <td class="num mono">{m["volume"]:,}</td>\n'
+            f'      <td class="num mono">{m["open_interest"]:,}</td>\n'
+            f'      <td class="mono">{exp_str}</td>\n'
+            "    </tr>"
+        )
+
+    vols = [m["volume"] for m in markets]
+    stat_tiles = "".join(
+        f'  <div class="stat"><span class="n">{v}</span><span class="l">{l}</span></div>\n'
+        for v, l in [
+            (f"{len(markets):,}", "Markets"),
+            (f"{sum(1 for m in markets if m['flags']):,}", "Flagged interesting"),
+            (f"{min((m['spread'] for m in markets), default=0):g}¢–{max((m['spread'] for m in markets), default=0):g}¢", "Spread range"),
+            (f"{(sum(vols)//len(vols)):,}" if vols else "0", "Avg volume"),
+        ]
+    )
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+    out = (
+        _DASHBOARD_TEMPLATE
+        .replace("__TITLE__", "Kalshi Tight Market Scanner")
+        .replace("__FONT_CSS__", font_css)
+        .replace("__GENERATED_AT__", generated_at)
+        .replace("__STAT_TILES__", stat_tiles)
+        .replace("__FILTER_SUMMARY__", html.escape(filter_summary))
+        .replace("__TABLE_ROWS__", "\n".join(row_html))
+        .replace("__ROW_COUNT__", f"{len(markets):,}")
+    )
+
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(out)
+    print(f"\nExported {len(markets):,} markets → {path} (dashboard)")
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 
@@ -503,6 +950,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--export", metavar="FILE.csv",
         help="Export filtered results to CSV",
+    )
+    p.add_argument(
+        "--export-html", metavar="FILE.html",
+        help="Export filtered results to a sortable, hyperlinked HTML dashboard",
     )
     p.add_argument(
         "--rows", type=int, default=60, metavar="N",
@@ -578,6 +1029,25 @@ def main() -> None:
 
     if args.export:
         export_csv(filtered, args.export)
+
+    if args.export_html:
+        filter_bits = [f"max spread {spread_desc}"]
+        if args.max_relative_spread is not None:
+            filter_bits.append(f"max relative spread {args.max_relative_spread:g}%")
+        filter_bits.append(f"min volume {args.min_volume:,}")
+        if args.min_oi:
+            filter_bits.append(f"min open interest {args.min_oi:,}")
+        if args.max_days is not None:
+            filter_bits.append(f"closes within {args.max_days}d")
+        if args.min_days is not None:
+            filter_bits.append(f"closes after {args.min_days}d")
+        if args.category:
+            filter_bits.append(f"category ~ {args.category!r}")
+        if args.interesting_only:
+            filter_bits.append("flagged-interesting only")
+        if args.exclude_modelable:
+            filter_bits.append("excluding modelable")
+        export_html(filtered, args.export_html, " · ".join(filter_bits))
 
 
 if __name__ == "__main__":
