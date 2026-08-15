@@ -33,7 +33,7 @@ jobs:
           KALSHI_PRIVATE_KEY: ${{ secrets.KALSHI_PRIVATE_KEY }}
         run: |
           python3 kalshi_scanner.py \
-            --max-spread 1 \
+            --max-spread 10 \
             --max-relative-spread 10 \
             --min-volume 5000 \
             --max-days 365 \

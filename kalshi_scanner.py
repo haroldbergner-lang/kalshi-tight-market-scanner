@@ -618,24 +618,39 @@ body {
 
 .filters b { color: var(--text); font-weight: 500; }
 
-.toggles {
+.filter-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 clamp(16px, 4vw, 40px) 20px;
+}
+
+.filter-group {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 18px;
-  padding: 0 clamp(16px, 4vw, 40px) 18px;
-  font-size: 13px;
+  gap: 8px 16px;
 }
 
-.toggles label {
+.filter-group .group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.filter-group label {
   display: inline-flex;
   align-items: center;
   gap: 7px;
   cursor: pointer;
   user-select: none;
+  font-size: 13px;
 }
 
-.toggles input[type="checkbox"] {
+.filter-group input[type="checkbox"] {
   appearance: none;
   width: 15px;
   height: 15px;
@@ -647,12 +662,12 @@ body {
   flex-shrink: 0;
 }
 
-.toggles input[type="checkbox"]:checked {
+.filter-group input[type="checkbox"]:checked {
   background: var(--accent);
   border-color: var(--accent);
 }
 
-.toggles input[type="checkbox"]:checked::after {
+.filter-group input[type="checkbox"]:checked::after {
   content: "";
   position: absolute;
   left: 4px;
@@ -664,7 +679,7 @@ body {
   transform: rotate(45deg);
 }
 
-.toggles input[type="checkbox"]:focus-visible {
+.filter-group input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -770,11 +785,6 @@ td.market a:focus-visible, thead th:focus-visible {
   color: var(--text-muted);
 }
 
-.flags {
-  color: var(--accent);
-  font-size: 12px;
-}
-
 footer {
   padding: 20px clamp(16px, 4vw, 40px) 40px;
   font-size: 11px;
@@ -799,9 +809,28 @@ __STAT_TILES__
 
 <div class="filters">__FILTER_SUMMARY__</div>
 
-<div class="toggles">
-  <label><input type="checkbox" id="toggleInteresting" /> Flagged interesting only</label>
-  <span id="showingCount"></span>
+<div class="filter-panel">
+  <div class="filter-group" id="categoryFilters">
+    <span class="group-label">Category</span>
+__CATEGORY_CHECKBOXES__
+  </div>
+  <div class="filter-group" id="spreadFilters">
+    <span class="group-label">Spread</span>
+    <label><input type="checkbox" class="spread-toggle" value="tight" checked /> ≤0.5¢</label>
+    <label><input type="checkbox" class="spread-toggle" value="low" checked /> 0.5¢–2¢</label>
+    <label><input type="checkbox" class="spread-toggle" value="mid" checked /> 2¢–3¢</label>
+    <label><input type="checkbox" class="spread-toggle" value="wide" checked /> 3¢+</label>
+  </div>
+  <div class="filter-group" id="volumeFilters">
+    <span class="group-label">Volume</span>
+    <label><input type="checkbox" class="volume-toggle" value="v1" checked /> 5K–25K</label>
+    <label><input type="checkbox" class="volume-toggle" value="v2" checked /> 25K–100K</label>
+    <label><input type="checkbox" class="volume-toggle" value="v3" checked /> 100K–500K</label>
+    <label><input type="checkbox" class="volume-toggle" value="v4" checked /> 500K+</label>
+  </div>
+  <div class="filter-group">
+    <span id="showingCount"></span>
+  </div>
 </div>
 
 <div class="table-wrap">
@@ -868,22 +897,36 @@ __TABLE_ROWS__
   applySort('open_ts', -1, 'num');
   ths[0].classList.add('sorted');
 
-  var toggleInteresting = document.getElementById('toggleInteresting');
   var showingCount = document.getElementById('showingCount');
   var totalRows = tbody.rows.length;
+  var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('#categoryFilters input[type=checkbox]'));
+  var spreadBoxes = Array.prototype.slice.call(document.querySelectorAll('.spread-toggle'));
+  var volumeBoxes = Array.prototype.slice.call(document.querySelectorAll('.volume-toggle'));
+
+  function checkedValues(boxes) {
+    var set = {};
+    boxes.forEach(function (b) { if (b.checked) set[b.value] = true; });
+    return set;
+  }
 
   function applyToggles() {
-    var wantInteresting = toggleInteresting.checked;
+    var cats = checkedValues(categoryBoxes);
+    var spreads = checkedValues(spreadBoxes);
+    var volumes = checkedValues(volumeBoxes);
     var visible = 0;
     Array.prototype.forEach.call(tbody.rows, function (r) {
-      var show = !wantInteresting || r.getAttribute('data-flags') === '1';
+      var show = cats[r.getAttribute('data-category')]
+        && spreads[r.getAttribute('data-spread-bucket')]
+        && volumes[r.getAttribute('data-volume-bucket')];
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
     showingCount.textContent = 'Showing ' + visible.toLocaleString() + ' of ' + totalRows.toLocaleString();
   }
 
-  toggleInteresting.addEventListener('change', applyToggles);
+  categoryBoxes.concat(spreadBoxes, volumeBoxes).forEach(function (b) {
+    b.addEventListener('change', applyToggles);
+  });
   applyToggles();
 })();
 </script>
@@ -898,6 +941,26 @@ def _spread_pill_class(spread: float) -> str:
     if spread <= 5:
         return "mid"
     return "wide"
+
+
+def _spread_bucket(spread: float) -> str:
+    if spread <= 0.5:
+        return "tight"
+    if spread <= 2:
+        return "low"
+    if spread <= 3:
+        return "mid"
+    return "wide"
+
+
+def _volume_bucket(volume: int) -> str:
+    if volume < 25_000:
+        return "v1"
+    if volume < 100_000:
+        return "v2"
+    if volume < 500_000:
+        return "v3"
+    return "v4"
 
 
 def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
@@ -917,33 +980,32 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
     for m in rows_sorted:
         pill = _spread_pill_class(m["spread"])
         rel = f"{m['relative_spread']*100:.1f}%" if m["relative_spread"] is not None else "—"
-        flags_str = ", ".join(f.replace("_", " ") for f in m["flags"])
         exp_str = f"{m['close_date']} ({m['days_to_exp']}d)" if m["days_to_exp"] is not None else m["close_date"]
         open_str = m["open_date"] or "—"
         title_esc = html.escape(m["title"])
         ticker_esc = html.escape(m["ticker"])
         url_esc = html.escape(m["url"], quote=True)
+        category_key = html.escape((m["category"] or "—").lower())
 
         row_html.append(
             "    <tr "
             f'data-open_ts="{m.get("open_timestamp", 0)}" '
             f'data-market="{html.escape(m["title"].lower())}" '
-            f'data-category="{html.escape((m["category"] or "").lower())}" '
+            f'data-category="{category_key}" '
             f'data-spread="{m["spread"]}" '
+            f'data-spread-bucket="{_spread_bucket(m["spread"])}" '
+            f'data-volume-bucket="{_volume_bucket(m["volume"])}" '
             f'data-rel="{m["relative_spread"] if m["relative_spread"] is not None else -1}" '
             f'data-bid="{m["yes_bid"]}" '
             f'data-ask="{m["yes_ask"]}" '
             f'data-volume="{m["volume"]}" '
             f'data-oi="{m["open_interest"]}" '
-            f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}" '
-            f'data-flags="{1 if m["flags"] else 0}"'
+            f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}"'
             ">\n"
             f'      <td class="mono">{open_str}</td>\n'
             f'      <td class="market"><a href="{url_esc}" target="_blank" rel="noopener">'
             f'<span class="title">{title_esc}</span>'
-            f'<span class="ticker">{ticker_esc}'
-            + (f' · <span class="flags">{html.escape(flags_str)}</span>' if flags_str else "")
-            + "</span></a></td>\n"
+            f'<span class="ticker">{ticker_esc}</span></a></td>\n'
             f'      <td class="cat">{html.escape(m["category"] or "—")}</td>\n'
             f'      <td class="num"><span class="pill {pill}">{_fmt_cents(m["spread"])}</span></td>\n'
             f'      <td class="num mono">{rel}</td>\n'
@@ -960,10 +1022,15 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
         f'  <div class="stat"><span class="n">{v}</span><span class="l">{l}</span></div>\n'
         for v, l in [
             (f"{len(markets):,}", "Markets"),
-            (f"{sum(1 for m in markets if m['flags']):,}", "Flagged interesting"),
+            (f"{len(set(m['category'] for m in markets)):,}", "Categories"),
             (f"{min((m['spread'] for m in markets), default=0):g}¢–{max((m['spread'] for m in markets), default=0):g}¢", "Spread range"),
             (f"{(sum(vols)//len(vols)):,}" if vols else "0", "Avg volume"),
         ]
+    )
+
+    category_checkboxes = "".join(
+        f'    <label><input type="checkbox" value="{html.escape(cat.lower())}" checked /> {html.escape(cat)}</label>\n'
+        for cat in sorted(set(m["category"] or "—" for m in markets))
     )
 
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -973,6 +1040,7 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
         .replace("__FONT_CSS__", font_css)
         .replace("__GENERATED_AT__", generated_at)
         .replace("__STAT_TILES__", stat_tiles)
+        .replace("__CATEGORY_CHECKBOXES__", category_checkboxes)
         .replace("__FILTER_SUMMARY__", html.escape(filter_summary))
         .replace("__TABLE_ROWS__", "\n".join(row_html))
         .replace("__ROW_COUNT__", f"{len(markets):,}")
