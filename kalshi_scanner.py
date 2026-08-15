@@ -131,8 +131,10 @@ MODELABLE_CATEGORIES: set[str] = {"Sports"}
 # stamping the event's category/title/sub_title onto every child market.
 
 # Kalshi category strings to skip entirely during fetch (saves time + memory).
-# These contain player props, game lines, and other high-volume sports contracts.
-SKIP_CATEGORIES: set[str] = {"Sports"}
+# Sports: player props, game lines, and other high-volume sports contracts.
+# Crypto: rolling 15-minute/hourly price-direction markets, extremely high churn.
+# Climate and Weather: established forecasting models exist, low signal here.
+SKIP_CATEGORIES: set[str] = {"Sports", "Crypto", "Climate and Weather"}
 
 
 def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CATEGORIES, max_pages: Optional[int] = None) -> list[dict]:
@@ -968,6 +970,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include Sports category markets (excluded by default — very large volume)",
     )
     p.add_argument(
+        "--include-crypto", action="store_true",
+        help="Include Crypto category markets (excluded by default — rolling 15-min/hourly churn)",
+    )
+    p.add_argument(
+        "--include-weather", action="store_true",
+        help="Include Climate and Weather category markets (excluded by default)",
+    )
+    p.add_argument(
         "--max-pages", type=int, metavar="N",
         help="Stop fetching after N pages (200 markets/page) — useful for quick scans",
     )
@@ -977,7 +987,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
 
-    skip = SKIP_CATEGORIES if not args.include_sports else set()
+    skip = set(SKIP_CATEGORIES)
+    if args.include_sports:
+        skip.discard("Sports")
+    if args.include_crypto:
+        skip.discard("Crypto")
+    if args.include_weather:
+        skip.discard("Climate and Weather")
     print("Fetching Kalshi markets…", file=sys.stderr)
     raw_markets = fetch_all_markets(verbose=True, skip_categories=skip, max_pages=args.max_pages)
     print(f"\nTotal kept: {len(raw_markets):,}", file=sys.stderr)
