@@ -303,6 +303,7 @@ def compute_metrics(raw: dict) -> Optional[dict]:
 def apply_filters(
     markets: list[dict],
     max_spread: Optional[int],
+    max_relative_spread: Optional[float],
     min_volume: Optional[int],
     min_open_interest: Optional[int],
     max_days: Optional[int],
@@ -314,6 +315,10 @@ def apply_filters(
     out = []
     for m in markets:
         if max_spread is not None and m["spread"] > max_spread:
+            continue
+        if max_relative_spread is not None and (
+            m["relative_spread"] is None or m["relative_spread"] > max_relative_spread
+        ):
             continue
         if min_volume is not None and m["volume"] < min_volume:
             continue
@@ -463,6 +468,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Min cumulative volume in contracts traded (default: 5000)",
     )
     p.add_argument(
+        "--max-relative-spread", type=float, metavar="PCT",
+        help="Max spread as a percentage of midpoint price, e.g. 10 for 10%% "
+             "(filters out near-zero-price markets where a tiny absolute spread is huge relatively)",
+    )
+    p.add_argument(
         "--min-oi", type=int, default=0, metavar="N",
         help="Min open interest / contracts outstanding (default: 0)",
     )
@@ -529,9 +539,13 @@ def main() -> None:
     markets.sort(key=lambda m: (m["spread"], m["relative_spread"] or 999))
 
     max_spread = None if args.all else args.max_spread
+    max_relative_spread = (
+        args.max_relative_spread / 100 if args.max_relative_spread is not None else None
+    )
     filtered = apply_filters(
         markets,
         max_spread=max_spread,
+        max_relative_spread=max_relative_spread,
         min_volume=args.min_volume,
         min_open_interest=args.min_oi,
         max_days=args.max_days,
@@ -544,7 +558,8 @@ def main() -> None:
 
     # ── View 1: all filtered markets ─────────────────────────────────────────
     spread_desc = f"≤{max_spread}¢" if max_spread is not None else "all spreads"
-    display(filtered, f"Kalshi Tight Market Scanner  [{spread_desc}, vol≥{args.min_volume}]", args.rows)
+    rel_desc = f", rel≤{args.max_relative_spread:g}%" if args.max_relative_spread is not None else ""
+    display(filtered, f"Kalshi Tight Market Scanner  [{spread_desc}{rel_desc}, vol≥{args.min_volume}]", args.rows)
 
     # ── View 2: interesting / hard-to-model markets ───────────────────────────
     if not args.no_interesting_view:

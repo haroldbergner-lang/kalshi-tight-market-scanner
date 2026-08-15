@@ -24,7 +24,9 @@ jobs:
         run: |
           python3 kalshi_scanner.py \
             --max-spread 1 \
+            --max-relative-spread 10 \
             --min-volume 5000 \
+            --max-days 365 \
             --rows 100 \
             --export kalshi_results.csv \
             2>&1 | tee scan_output.txt
@@ -35,7 +37,9 @@ jobs:
         run: |
           python3 kalshi_scanner.py \
             --max-spread 1 \
+            --max-relative-spread 10 \
             --min-volume 5000 \
+            --max-days 365 \
             --interesting-only \
             --exclude-modelable \
             --rows 100 \
