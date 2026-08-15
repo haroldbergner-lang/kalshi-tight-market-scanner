@@ -727,8 +727,38 @@ body {
 
 #showingCount {
   font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-muted);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+#showingCount .n { color: var(--accent); }
+
+.group-actions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: 4px;
+}
+
+.group-actions button {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.group-actions button:hover { opacity: 0.75; }
+
+.group-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .table-wrap {
@@ -853,6 +883,10 @@ __STAT_TILES__
 <div class="filter-panel">
   <div class="filter-group" id="categoryFilters">
     <span class="group-label">Category</span>
+    <span class="group-actions">
+      <button type="button" id="catSelectAll">All</button>
+      <button type="button" id="catSelectNone">None</button>
+    </span>
 __CATEGORY_CHECKBOXES__
   </div>
   <div class="filter-group" id="spreadFilters">
@@ -985,12 +1019,22 @@ __TABLE_ROWS__
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
-    showingCount.textContent = 'Showing ' + visible.toLocaleString() + ' of ' + totalRows.toLocaleString();
+    showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> of ' + totalRows.toLocaleString() + ' markets match';
   }
 
   categoryBoxes.concat(spreadRadios, volumeRadios, closesRadios).forEach(function (b) {
     b.addEventListener('change', applyToggles);
   });
+
+  document.getElementById('catSelectAll').addEventListener('click', function () {
+    categoryBoxes.forEach(function (b) { b.checked = true; });
+    applyToggles();
+  });
+  document.getElementById('catSelectNone').addEventListener('click', function () {
+    categoryBoxes.forEach(function (b) { b.checked = false; });
+    applyToggles();
+  });
+
   applyToggles();
 })();
 </script>
