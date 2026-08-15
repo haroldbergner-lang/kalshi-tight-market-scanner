@@ -135,7 +135,8 @@ MODELABLE_CATEGORIES: set[str] = {"Sports"}
 # Crypto: rolling 15-minute/hourly price-direction markets, extremely high churn.
 # Climate and Weather: established forecasting models exist, low signal here.
 # Mentions: "will X say Y" word-count markets, low signal.
-SKIP_CATEGORIES: set[str] = {"Sports", "Crypto", "Climate and Weather", "Mentions"}
+# Commodities: low signal for this scanner's purposes.
+SKIP_CATEGORIES: set[str] = {"Sports", "Crypto", "Climate and Weather", "Mentions", "Commodities"}
 
 
 def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CATEGORIES, max_pages: Optional[int] = None) -> list[dict]:
@@ -333,6 +334,8 @@ def apply_filters(
 ) -> list[dict]:
     out = []
     for m in markets:
+        if not m["category"]:
+            continue
         if max_spread is not None and m["spread"] > max_spread:
             continue
         if max_relative_spread is not None and (
@@ -684,6 +687,38 @@ body {
   outline-offset: 2px;
 }
 
+.filter-group input[type="radio"] {
+  appearance: none;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.filter-group input[type="radio"]:checked {
+  border-color: var(--accent);
+}
+
+.filter-group input[type="radio"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.filter-group input[type="radio"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 #showingCount {
   font-family: var(--font-mono);
   font-size: 12px;
@@ -815,18 +850,18 @@ __STAT_TILES__
 __CATEGORY_CHECKBOXES__
   </div>
   <div class="filter-group" id="spreadFilters">
-    <span class="group-label">Spread</span>
-    <label><input type="checkbox" class="spread-toggle" value="tight" checked /> ≤0.5¢</label>
-    <label><input type="checkbox" class="spread-toggle" value="low" checked /> 0.5¢–2¢</label>
-    <label><input type="checkbox" class="spread-toggle" value="mid" checked /> 2¢–3¢</label>
-    <label><input type="checkbox" class="spread-toggle" value="wide" checked /> 3¢+</label>
+    <span class="group-label">Max spread</span>
+    <label><input type="radio" name="spread" value="0.5" /> ≤0.5¢</label>
+    <label><input type="radio" name="spread" value="2" /> ≤2¢</label>
+    <label><input type="radio" name="spread" value="3" /> ≤3¢</label>
+    <label><input type="radio" name="spread" value="Infinity" checked /> Any</label>
   </div>
   <div class="filter-group" id="volumeFilters">
-    <span class="group-label">Volume</span>
-    <label><input type="checkbox" class="volume-toggle" value="v1" checked /> 5K–25K</label>
-    <label><input type="checkbox" class="volume-toggle" value="v2" checked /> 25K–100K</label>
-    <label><input type="checkbox" class="volume-toggle" value="v3" checked /> 100K–500K</label>
-    <label><input type="checkbox" class="volume-toggle" value="v4" checked /> 500K+</label>
+    <span class="group-label">Min volume</span>
+    <label><input type="radio" name="volume" value="5000" checked /> ≥5K</label>
+    <label><input type="radio" name="volume" value="25000" /> ≥25K</label>
+    <label><input type="radio" name="volume" value="100000" /> ≥100K</label>
+    <label><input type="radio" name="volume" value="500000" /> ≥500K</label>
   </div>
   <div class="filter-group">
     <span id="showingCount"></span>
@@ -900,8 +935,8 @@ __TABLE_ROWS__
   var showingCount = document.getElementById('showingCount');
   var totalRows = tbody.rows.length;
   var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('#categoryFilters input[type=checkbox]'));
-  var spreadBoxes = Array.prototype.slice.call(document.querySelectorAll('.spread-toggle'));
-  var volumeBoxes = Array.prototype.slice.call(document.querySelectorAll('.volume-toggle'));
+  var spreadRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=spread]'));
+  var volumeRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=volume]'));
 
   function checkedValues(boxes) {
     var set = {};
@@ -909,22 +944,27 @@ __TABLE_ROWS__
     return set;
   }
 
+  function checkedNumber(radios) {
+    var picked = radios.filter(function (r) { return r.checked; })[0];
+    return picked ? parseFloat(picked.value) : Infinity;
+  }
+
   function applyToggles() {
     var cats = checkedValues(categoryBoxes);
-    var spreads = checkedValues(spreadBoxes);
-    var volumes = checkedValues(volumeBoxes);
+    var maxSpread = checkedNumber(spreadRadios);
+    var minVolume = checkedNumber(volumeRadios);
     var visible = 0;
     Array.prototype.forEach.call(tbody.rows, function (r) {
       var show = cats[r.getAttribute('data-category')]
-        && spreads[r.getAttribute('data-spread-bucket')]
-        && volumes[r.getAttribute('data-volume-bucket')];
+        && parseFloat(r.getAttribute('data-spread')) <= maxSpread
+        && parseFloat(r.getAttribute('data-volume')) >= minVolume;
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
     showingCount.textContent = 'Showing ' + visible.toLocaleString() + ' of ' + totalRows.toLocaleString();
   }
 
-  categoryBoxes.concat(spreadBoxes, volumeBoxes).forEach(function (b) {
+  categoryBoxes.concat(spreadRadios, volumeRadios).forEach(function (b) {
     b.addEventListener('change', applyToggles);
   });
   applyToggles();
@@ -941,26 +981,6 @@ def _spread_pill_class(spread: float) -> str:
     if spread <= 5:
         return "mid"
     return "wide"
-
-
-def _spread_bucket(spread: float) -> str:
-    if spread <= 0.5:
-        return "tight"
-    if spread <= 2:
-        return "low"
-    if spread <= 3:
-        return "mid"
-    return "wide"
-
-
-def _volume_bucket(volume: int) -> str:
-    if volume < 25_000:
-        return "v1"
-    if volume < 100_000:
-        return "v2"
-    if volume < 500_000:
-        return "v3"
-    return "v4"
 
 
 def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
@@ -993,8 +1013,6 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'data-market="{html.escape(m["title"].lower())}" '
             f'data-category="{category_key}" '
             f'data-spread="{m["spread"]}" '
-            f'data-spread-bucket="{_spread_bucket(m["spread"])}" '
-            f'data-volume-bucket="{_volume_bucket(m["volume"])}" '
             f'data-rel="{m["relative_spread"] if m["relative_spread"] is not None else -1}" '
             f'data-bid="{m["yes_bid"]}" '
             f'data-ask="{m["yes_ask"]}" '
@@ -1141,6 +1159,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Include Mentions category markets (excluded by default — low signal)",
     )
     p.add_argument(
+        "--include-commodities", action="store_true",
+        help="Include Commodities category markets (excluded by default — low signal)",
+    )
+    p.add_argument(
         "--max-pages", type=int, metavar="N",
         help="Stop fetching after N pages (200 markets/page) — useful for quick scans",
     )
@@ -1159,6 +1181,8 @@ def main() -> None:
         skip.discard("Climate and Weather")
     if args.include_mentions:
         skip.discard("Mentions")
+    if args.include_commodities:
+        skip.discard("Commodities")
     print("Fetching Kalshi markets…", file=sys.stderr)
     raw_markets = fetch_all_markets(verbose=True, skip_categories=skip, max_pages=args.max_pages)
     print(f"\nTotal kept: {len(raw_markets):,}", file=sys.stderr)
