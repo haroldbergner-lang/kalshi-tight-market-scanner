@@ -851,10 +851,10 @@ __CATEGORY_CHECKBOXES__
   </div>
   <div class="filter-group" id="spreadFilters">
     <span class="group-label">Max spread</span>
-    <label><input type="radio" name="spread" value="0.5" /> ≤0.5¢</label>
+    <label><input type="radio" name="spread" value="0.5" checked /> ≤0.5¢</label>
     <label><input type="radio" name="spread" value="2" /> ≤2¢</label>
     <label><input type="radio" name="spread" value="3" /> ≤3¢</label>
-    <label><input type="radio" name="spread" value="Infinity" checked /> Any</label>
+    <label><input type="radio" name="spread" value="Infinity" /> Any</label>
   </div>
   <div class="filter-group" id="volumeFilters">
     <span class="group-label">Min volume</span>
