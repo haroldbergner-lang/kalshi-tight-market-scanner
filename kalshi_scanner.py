@@ -715,15 +715,20 @@ tbody tr:hover { background: var(--row-hover); }
 td.market {
   white-space: normal;
   min-width: 260px;
+  padding: 0;
 }
 
 td.market a {
+  display: block;
+  padding: 9px 12px;
   color: var(--text);
   text-decoration: none;
   font-weight: 500;
+  cursor: pointer;
 }
 
-td.market a:hover { color: var(--accent); text-decoration: underline; }
+td.market a:hover { color: var(--accent); }
+td.market a:hover .title { text-decoration: underline; }
 
 td.market a:focus-visible, thead th:focus-visible {
   outline: 2px solid var(--accent);
@@ -735,18 +740,8 @@ td.market a:focus-visible, thead th:focus-visible {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-muted);
+  font-weight: 400;
   margin-top: 2px;
-}
-
-.modelable {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 10px;
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  padding: 0 4px;
-  vertical-align: middle;
 }
 
 .num, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -799,7 +794,6 @@ __STAT_TILES__
 
 <div class="toggles">
   <label><input type="checkbox" id="toggleInteresting" /> Flagged interesting only</label>
-  <label><input type="checkbox" id="toggleModelable" /> Exclude modelable</label>
   <span id="showingCount"></span>
 </div>
 
@@ -868,18 +862,14 @@ __TABLE_ROWS__
   ths[0].classList.add('sorted');
 
   var toggleInteresting = document.getElementById('toggleInteresting');
-  var toggleModelable = document.getElementById('toggleModelable');
   var showingCount = document.getElementById('showingCount');
   var totalRows = tbody.rows.length;
 
   function applyToggles() {
     var wantInteresting = toggleInteresting.checked;
-    var wantExcludeModelable = toggleModelable.checked;
     var visible = 0;
     Array.prototype.forEach.call(tbody.rows, function (r) {
-      var show = true;
-      if (wantInteresting && r.getAttribute('data-flags') !== '1') show = false;
-      if (wantExcludeModelable && r.getAttribute('data-modelable') === '1') show = false;
+      var show = !wantInteresting || r.getAttribute('data-flags') === '1';
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
@@ -887,7 +877,6 @@ __TABLE_ROWS__
   }
 
   toggleInteresting.addEventListener('change', applyToggles);
-  toggleModelable.addEventListener('change', applyToggles);
   applyToggles();
 })();
 </script>
@@ -921,7 +910,6 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
     for m in rows_sorted:
         pill = _spread_pill_class(m["spread"])
         rel = f"{m['relative_spread']*100:.1f}%" if m["relative_spread"] is not None else "—"
-        modelable = '<span class="modelable" title="Established models/data exist for this market">~</span>' if m["is_modelable"] else ""
         flags_str = ", ".join(f.replace("_", " ") for f in m["flags"])
         exp_str = f"{m['close_date']} ({m['days_to_exp']}d)" if m["days_to_exp"] is not None else m["close_date"]
         open_str = m["open_date"] or "—"
@@ -941,14 +929,14 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'data-volume="{m["volume"]}" '
             f'data-oi="{m["open_interest"]}" '
             f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}" '
-            f'data-flags="{1 if m["flags"] else 0}" '
-            f'data-modelable="{1 if m["is_modelable"] else 0}"'
+            f'data-flags="{1 if m["flags"] else 0}"'
             ">\n"
             f'      <td class="mono">{open_str}</td>\n'
-            f'      <td class="market"><a href="{url_esc}" target="_blank" rel="noopener">{title_esc}</a>{modelable}'
+            f'      <td class="market"><a href="{url_esc}" target="_blank" rel="noopener">'
+            f'<span class="title">{title_esc}</span>'
             f'<span class="ticker">{ticker_esc}'
             + (f' · <span class="flags">{html.escape(flags_str)}</span>' if flags_str else "")
-            + "</span></td>\n"
+            + "</span></a></td>\n"
             f'      <td class="cat">{html.escape(m["category"] or "—")}</td>\n'
             f'      <td class="num"><span class="pill {pill}">{_fmt_cents(m["spread"])}</span></td>\n'
             f'      <td class="num mono">{rel}</td>\n'
