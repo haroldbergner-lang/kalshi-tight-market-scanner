@@ -579,6 +579,9 @@ def export_csv(markets: list[dict], path: str) -> None:
 
 # ── HTML dashboard export ────────────────────────────────────────────────────
 
+# Kalshi categories left unchecked on the dashboard by default.
+DASHBOARD_OFF_CATEGORIES: set[str] = {"Entertainment"}
+
 _ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 _DASHBOARD_TEMPLATE = """<!doctype html>
@@ -955,6 +958,17 @@ td.market a:focus-visible, thead th:focus-visible {
   font-size: 0.85em;
 }
 
+.cat-divider {
+  align-self: stretch;
+  width: 1px;
+  background: var(--border);
+}
+
+.cat-note {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 footer {
   padding: 20px clamp(16px, 4vw, 40px) 40px;
   font-size: 11px;
@@ -1223,10 +1237,25 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
         ]
     )
 
-    category_checkboxes = "".join(
-        f'    <label><input type="checkbox" value="{html.escape(cat.lower())}" checked /> {html.escape(cat)}</label>\n'
-        for cat in sorted(set(m["category"] or "—" for m in markets))
-    )
+    def _category_checkbox(cat: str, checked: bool) -> str:
+        return (
+            f'    <label><input type="checkbox" value="{html.escape(cat.lower())}"{" checked" if checked else ""} /> '
+            f'{html.escape(cat)}</label>\n'
+        )
+
+    # Off-by-default categories go last, after a divider, so the default view
+    # is news-driven events. Their markets are still in the page — one click away.
+    all_categories = sorted(set(m["category"] or "—" for m in markets))
+    main_categories = [c for c in all_categories if c not in DASHBOARD_OFF_CATEGORIES]
+    off_categories = [c for c in all_categories if c in DASHBOARD_OFF_CATEGORIES]
+    category_checkboxes = "".join(_category_checkbox(c, True) for c in main_categories)
+    if off_categories:
+        category_checkboxes += '    <span class="cat-divider" aria-hidden="true"></span>\n'
+        category_checkboxes += "".join(_category_checkbox(c, False) for c in off_categories)
+        category_checkboxes += (
+            '    <span class="cat-note">Off by default: mostly awards, reality TV and chart rankings, '
+            "not news-driven</span>\n"
+        )
 
     # Only discrete news-driven events are shown by default; the rest are one click away.
     kind_counts = {k: sum(1 for m in markets if m["kind"] == k) for k in MARKET_KINDS}
