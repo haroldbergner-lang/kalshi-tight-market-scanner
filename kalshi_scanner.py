@@ -885,7 +885,58 @@ button.star:focus-visible {
   outline-offset: 2px;
 }
 
-tbody tr.starred { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: 0 clamp(16px, 4vw, 40px);
+  border-bottom: 1px solid var(--border);
+  margin: 0 clamp(16px, 4vw, 40px) 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.tabs button[role="tab"] {
+  appearance: none;
+  background: none;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tabs button[role="tab"]:hover { color: var(--text); }
+
+.tabs button[role="tab"][aria-selected="true"] {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.tabs button[role="tab"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tabs .tab-actions {
+  margin-left: auto;
+  align-self: center;
+}
+
+.filter-panel.inactive { opacity: 0.45; }
+
+.empty-state {
+  padding: 32px 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
 
 .table-wrap {
   overflow-x: auto;
@@ -1055,18 +1106,22 @@ __KIND_CHECKBOXES__
     <label><input type="radio" name="closes" value="beyond" /> Beyond 1 year</label>
     <label><input type="radio" name="closes" value="any" /> Any</label>
   </div>
-  <div class="filter-group" id="starFilters">
-    <span class="group-label">Starred</span>
-    <label><input type="checkbox" id="starredOnly" /> Starred only <span class="kind-n" id="starCount">0</span></label>
-    <span class="group-actions">
-      <button type="button" id="copyStarred">Copy tickers</button>
-      <button type="button" id="clearStarred">Clear</button>
-    </span>
-    <span class="cat-note">Starred markets are pinned to the top and ignore the other filters. Saved in this browser only.</span>
-  </div>
+</div>
+
+<div class="filter-panel" style="padding-bottom: 12px">
   <div class="filter-group">
     <span id="showingCount"></span>
   </div>
+</div>
+
+<div class="tabs" role="tablist">
+  <button type="button" role="tab" id="tabAll" aria-selected="true">All markets</button>
+  <button type="button" role="tab" id="tabStarred" aria-selected="false">★ Starred <span class="kind-n" id="starCount">0</span></button>
+  <span class="group-actions tab-actions" id="starActions" hidden>
+    <span class="cat-note">Filters don't apply here · saved in this browser only</span>
+    <button type="button" id="copyStarred">Copy tickers</button>
+    <button type="button" id="clearStarred">Clear</button>
+  </span>
 </div>
 
 <div class="table-wrap">
@@ -1091,6 +1146,7 @@ __KIND_CHECKBOXES__
 __TABLE_ROWS__
   </tbody>
 </table>
+<div class="empty-state" id="starEmpty" hidden>No starred markets yet. Click ☆ on any row in All markets to add one.</div>
 </div>
 
 <footer>kalshi_scanner.py · __ROW_COUNT__ markets · data from Kalshi public API · click any column to re-sort</footer>
@@ -1126,8 +1182,6 @@ __TABLE_ROWS__
   function applySort(key, dir, type) {
     var rows = Array.prototype.slice.call(tbody.rows);
     rows.sort(function (a, b) {
-      var as = isStarred(a), bs = isStarred(b);
-      if (as !== bs) return as ? -1 : 1;  // starred pinned to the top
       var av = a.getAttribute('data-' + key);
       var bv = b.getAttribute('data-' + key);
       if (type === 'num') {
@@ -1189,7 +1243,7 @@ __TABLE_ROWS__
     var maxSpread = checkedNumber(spreadRadios);
     var minVolume = checkedNumber(volumeRadios);
     var closesWindow = checkedString(closesRadios);
-    var starredOnly = starredOnlyBox.checked;
+    var starredView = view === 'starred';
     var visible = 0;
     Array.prototype.forEach.call(tbody.rows, function (r) {
       var closesDays = parseFloat(r.getAttribute('data-closes'));
@@ -1201,11 +1255,10 @@ __TABLE_ROWS__
         && parseFloat(r.getAttribute('data-spread')) <= maxSpread
         && parseFloat(r.getAttribute('data-volume')) >= minVolume
         && closesOk;
-      var show = isStarred(r) || (!starredOnly && passes);
+      var show = starredView ? isStarred(r) : passes;
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
-    showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> of ' + totalRows.toLocaleString() + ' markets match';
 
     // Starred tickers missing from this scan (spread/volume/price now outside the scan's filters, or closed).
     var onPage = {};
@@ -1213,13 +1266,39 @@ __TABLE_ROWS__
     var starredTickers = Object.keys(starred);
     var missing = starredTickers.filter(function (t) { return !onPage[t]; }).length;
     starCount.textContent = starredTickers.length.toLocaleString();
-    if (missing) {
-      showingCount.innerHTML += ' · ' + missing + ' starred not in this scan';
+    if (starredView) {
+      showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> starred'
+        + (missing ? ' · ' + missing + ' not in this scan' : '');
+    } else {
+      showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> of ' + totalRows.toLocaleString() + ' markets match';
     }
+    starEmpty.hidden = !(starredView && visible === 0);
   }
 
-  var starredOnlyBox = document.getElementById('starredOnly');
   var starCount = document.getElementById('starCount');
+  var starEmpty = document.getElementById('starEmpty');
+  var filterPanel = document.querySelector('.filter-panel');
+  var tabAll = document.getElementById('tabAll');
+  var tabStarred = document.getElementById('tabStarred');
+  var starActions = document.getElementById('starActions');
+
+  // ── Tabs: All markets / Starred (remembered per browser) ──
+  var VIEW_KEY = 'kalshiScanner.view.v1';
+  var view = 'all';
+  try { if (localStorage.getItem(VIEW_KEY) === 'starred') view = 'starred'; } catch (e) {}
+
+  function setView(v) {
+    view = v;
+    try { localStorage.setItem(VIEW_KEY, v); } catch (e) {}
+    tabAll.setAttribute('aria-selected', v === 'all' ? 'true' : 'false');
+    tabStarred.setAttribute('aria-selected', v === 'starred' ? 'true' : 'false');
+    starActions.hidden = v !== 'starred';
+    filterPanel.classList.toggle('inactive', v === 'starred');
+    applyToggles();
+  }
+
+  tabAll.addEventListener('click', function () { setView('all'); });
+  tabStarred.addEventListener('click', function () { setView('starred'); });
 
   tbody.addEventListener('click', function (e) {
     var btn = e.target.closest('button.star');
@@ -1229,11 +1308,8 @@ __TABLE_ROWS__
     if (starred[t]) delete starred[t]; else starred[t] = true;
     saveStars();
     paintStar(r);
-    applySort(state.key, state.dir, state.type);
     applyToggles();
   });
-
-  starredOnlyBox.addEventListener('change', applyToggles);
 
   document.getElementById('copyStarred').addEventListener('click', function () {
     var text = Object.keys(starred).sort().join('\\n');
@@ -1253,7 +1329,6 @@ __TABLE_ROWS__
     starred = {};
     saveStars();
     Array.prototype.forEach.call(tbody.rows, paintStar);
-    applySort(state.key, state.dir, state.type);
     applyToggles();
   });
 
@@ -1270,7 +1345,7 @@ __TABLE_ROWS__
     applyToggles();
   });
 
-  applyToggles();
+  setView(view);
 })();
 </script>
 </body>
