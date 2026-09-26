@@ -858,6 +858,35 @@ body {
   outline-offset: 2px;
 }
 
+th.star-col, td.star-cell {
+  width: 1%;
+  padding-left: 12px;
+  padding-right: 0;
+  text-align: center;
+  cursor: default;
+}
+
+button.star {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 16px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  cursor: pointer;
+}
+
+button.star:hover { color: var(--accent); }
+button.star[aria-pressed="true"] { color: var(--accent); }
+
+button.star:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+tbody tr.starred { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
 .table-wrap {
   overflow-x: auto;
   padding: 0 clamp(16px, 4vw, 40px) 40px;
@@ -1026,6 +1055,15 @@ __KIND_CHECKBOXES__
     <label><input type="radio" name="closes" value="beyond" /> Beyond 1 year</label>
     <label><input type="radio" name="closes" value="any" /> Any</label>
   </div>
+  <div class="filter-group" id="starFilters">
+    <span class="group-label">Starred</span>
+    <label><input type="checkbox" id="starredOnly" /> Starred only <span class="kind-n" id="starCount">0</span></label>
+    <span class="group-actions">
+      <button type="button" id="copyStarred">Copy tickers</button>
+      <button type="button" id="clearStarred">Clear</button>
+    </span>
+    <span class="cat-note">Starred markets are pinned to the top and ignore the other filters. Saved in this browser only.</span>
+  </div>
   <div class="filter-group">
     <span id="showingCount"></span>
   </div>
@@ -1035,6 +1073,7 @@ __KIND_CHECKBOXES__
 <table id="dash">
   <thead>
     <tr>
+      <th class="star-col" aria-label="Star"></th>
       <th data-type="num" data-key="closes">Closes<span class="arrow">▲</span></th>
       <th data-type="num" data-key="open_ts">Listed<span class="arrow">▼</span></th>
       <th data-type="text" data-key="market">Market<span class="arrow">▼</span></th>
@@ -1060,12 +1099,35 @@ __TABLE_ROWS__
 (function () {
   var table = document.getElementById('dash');
   var tbody = table.tBodies[0];
-  var ths = table.querySelectorAll('thead th');
-  var state = { key: 'closes', dir: 1 };
+  var ths = Array.prototype.slice.call(table.querySelectorAll('thead th[data-key]'));
+  var state = { key: 'closes', dir: 1, type: 'num' };
+
+  // ── Stars: saved per browser by ticker, so they survive each rebuild ──
+  var STAR_KEY = 'kalshiScanner.starred.v1';
+  var starred = {};
+  try {
+    (JSON.parse(localStorage.getItem(STAR_KEY) || '[]') || []).forEach(function (t) { starred[t] = true; });
+  } catch (e) { starred = {}; }
+
+  function saveStars() {
+    try { localStorage.setItem(STAR_KEY, JSON.stringify(Object.keys(starred))); } catch (e) {}
+  }
+
+  function isStarred(r) { return !!starred[r.getAttribute('data-ticker')]; }
+
+  function paintStar(r) {
+    var on = isStarred(r);
+    r.classList.toggle('starred', on);
+    var btn = r.querySelector('button.star');
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.textContent = on ? '★' : '☆';
+  }
 
   function applySort(key, dir, type) {
     var rows = Array.prototype.slice.call(tbody.rows);
     rows.sort(function (a, b) {
+      var as = isStarred(a), bs = isStarred(b);
+      if (as !== bs) return as ? -1 : 1;  // starred pinned to the top
       var av = a.getAttribute('data-' + key);
       var bv = b.getAttribute('data-' + key);
       if (type === 'num') {
@@ -1082,7 +1144,7 @@ __TABLE_ROWS__
       var key = th.getAttribute('data-key');
       var type = th.getAttribute('data-type');
       var dir = (state.key === key) ? -state.dir : (type === 'num' ? -1 : 1);
-      state = { key: key, dir: dir };
+      state = { key: key, dir: dir, type: type };
       ths.forEach(function (t) {
         t.classList.remove('sorted');
         t.querySelector('.arrow').textContent = '▼';
@@ -1093,6 +1155,7 @@ __TABLE_ROWS__
     });
   });
 
+  Array.prototype.forEach.call(tbody.rows, paintStar);
   applySort('closes', 1, 'num');
   ths[0].classList.add('sorted');
 
@@ -1126,22 +1189,73 @@ __TABLE_ROWS__
     var maxSpread = checkedNumber(spreadRadios);
     var minVolume = checkedNumber(volumeRadios);
     var closesWindow = checkedString(closesRadios);
+    var starredOnly = starredOnlyBox.checked;
     var visible = 0;
     Array.prototype.forEach.call(tbody.rows, function (r) {
       var closesDays = parseFloat(r.getAttribute('data-closes'));
       var closesOk = closesWindow === 'any'
         || (closesWindow === 'within' && closesDays <= 365)
         || (closesWindow === 'beyond' && closesDays > 365);
-      var show = cats[r.getAttribute('data-category')]
+      var passes = cats[r.getAttribute('data-category')]
         && kinds[r.getAttribute('data-kind')]
         && parseFloat(r.getAttribute('data-spread')) <= maxSpread
         && parseFloat(r.getAttribute('data-volume')) >= minVolume
         && closesOk;
+      var show = isStarred(r) || (!starredOnly && passes);
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
     showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> of ' + totalRows.toLocaleString() + ' markets match';
+
+    // Starred tickers missing from this scan (spread/volume/price now outside the scan's filters, or closed).
+    var onPage = {};
+    Array.prototype.forEach.call(tbody.rows, function (r) { onPage[r.getAttribute('data-ticker')] = true; });
+    var starredTickers = Object.keys(starred);
+    var missing = starredTickers.filter(function (t) { return !onPage[t]; }).length;
+    starCount.textContent = starredTickers.length.toLocaleString();
+    if (missing) {
+      showingCount.innerHTML += ' · ' + missing + ' starred not in this scan';
+    }
   }
+
+  var starredOnlyBox = document.getElementById('starredOnly');
+  var starCount = document.getElementById('starCount');
+
+  tbody.addEventListener('click', function (e) {
+    var btn = e.target.closest('button.star');
+    if (!btn) return;
+    var r = btn.closest('tr');
+    var t = r.getAttribute('data-ticker');
+    if (starred[t]) delete starred[t]; else starred[t] = true;
+    saveStars();
+    paintStar(r);
+    applySort(state.key, state.dir, state.type);
+    applyToggles();
+  });
+
+  starredOnlyBox.addEventListener('change', applyToggles);
+
+  document.getElementById('copyStarred').addEventListener('click', function () {
+    var text = Object.keys(starred).sort().join('\\n');
+    if (!text) return;
+    var btn = this;
+    function done() { btn.textContent = 'Copied'; setTimeout(function () { btn.textContent = 'Copy tickers'; }, 1500); }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { window.prompt('Starred tickers:', text); });
+    } else {
+      window.prompt('Starred tickers:', text);
+    }
+  });
+
+  document.getElementById('clearStarred').addEventListener('click', function () {
+    var n = Object.keys(starred).length;
+    if (!n || !window.confirm('Unstar all ' + n + ' markets?')) return;
+    starred = {};
+    saveStars();
+    Array.prototype.forEach.call(tbody.rows, paintStar);
+    applySort(state.key, state.dir, state.type);
+    applyToggles();
+  });
 
   categoryBoxes.concat(kindBoxes, spreadRadios, volumeRadios, closesRadios).forEach(function (b) {
     b.addEventListener('change', applyToggles);
@@ -1201,6 +1315,7 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
 
         row_html.append(
             "    <tr "
+            f'data-ticker="{ticker_esc}" '
             f'data-open_ts="{m.get("open_timestamp", 0)}" '
             f'data-market="{html.escape(m["title"].lower())}" '
             f'data-category="{category_key}" '
@@ -1213,6 +1328,8 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'data-oi="{m["open_interest"]}" '
             f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}"'
             ">\n"
+            '      <td class="star-cell"><button type="button" class="star" aria-pressed="false" '
+            'aria-label="Star this market" title="Star">☆</button></td>\n'
             f'      <td class="mono">{exp_str}</td>\n'
             f'      <td class="mono">{open_str}</td>\n'
             f'      <td class="market"><a href="{url_esc}" target="_blank" rel="noopener">'
