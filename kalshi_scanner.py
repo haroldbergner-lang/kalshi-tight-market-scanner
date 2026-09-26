@@ -984,7 +984,7 @@ footer {
 
 <header class="masthead">
   <h1 class="wordmark">Kalshi <span>Tight</span> Market Scanner</h1>
-  <div class="meta">Generated __GENERATED_AT__ UTC<br />Sorted by listing date, newest first</div>
+  <div class="meta">Generated __GENERATED_AT__ UTC<br />Sorted by close date, soonest first</div>
 </header>
 
 <div class="stats">
@@ -1035,6 +1035,7 @@ __KIND_CHECKBOXES__
 <table id="dash">
   <thead>
     <tr>
+      <th data-type="num" data-key="closes">Closes<span class="arrow">▲</span></th>
       <th data-type="num" data-key="open_ts">Listed<span class="arrow">▼</span></th>
       <th data-type="text" data-key="market">Market<span class="arrow">▼</span></th>
       <th data-type="text" data-key="category">Category<span class="arrow">▼</span></th>
@@ -1045,7 +1046,6 @@ __KIND_CHECKBOXES__
       <th class="num" data-type="num" data-key="ask">Ask<span class="arrow">▼</span></th>
       <th class="num" data-type="num" data-key="volume">Volume<span class="arrow">▼</span></th>
       <th class="num" data-type="num" data-key="oi">Open Int.<span class="arrow">▼</span></th>
-      <th data-type="num" data-key="closes">Closes<span class="arrow">▼</span></th>
     </tr>
   </thead>
   <tbody>
@@ -1061,7 +1061,7 @@ __TABLE_ROWS__
   var table = document.getElementById('dash');
   var tbody = table.tBodies[0];
   var ths = table.querySelectorAll('thead th');
-  var state = { key: 'open_ts', dir: -1 };
+  var state = { key: 'closes', dir: 1 };
 
   function applySort(key, dir, type) {
     var rows = Array.prototype.slice.call(tbody.rows);
@@ -1093,7 +1093,7 @@ __TABLE_ROWS__
     });
   });
 
-  applySort('open_ts', -1, 'num');
+  applySort('closes', 1, 'num');
   ths[0].classList.add('sorted');
 
   var showingCount = document.getElementById('showingCount');
@@ -1182,8 +1182,11 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
     except OSError:
         font_css = ""
 
-    # Newest-listed-first by default; client-side JS lets the viewer re-sort.
-    rows_sorted = sorted(markets, key=lambda m: m.get("open_timestamp", 0), reverse=True)
+    # Soonest-closing first by default; client-side JS lets the viewer re-sort.
+    rows_sorted = sorted(
+        markets,
+        key=lambda m: (m["days_to_exp"] if m["days_to_exp"] is not None else 999999, m["close_date"]),
+    )
 
     row_html = []
     for m in rows_sorted:
@@ -1210,6 +1213,7 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'data-oi="{m["open_interest"]}" '
             f'data-closes="{m["days_to_exp"] if m["days_to_exp"] is not None else 999999}"'
             ">\n"
+            f'      <td class="mono">{exp_str}</td>\n'
             f'      <td class="mono">{open_str}</td>\n'
             f'      <td class="market"><a href="{url_esc}" target="_blank" rel="noopener">'
             f'<span class="title">{title_esc}</span>'
@@ -1222,7 +1226,6 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'      <td class="num mono">{_fmt_cents(m["yes_ask"])}</td>\n'
             f'      <td class="num mono">{m["volume"]:,}</td>\n'
             f'      <td class="num mono">{m["open_interest"]:,}</td>\n'
-            f'      <td class="mono">{exp_str}</td>\n'
             "    </tr>"
         )
 
