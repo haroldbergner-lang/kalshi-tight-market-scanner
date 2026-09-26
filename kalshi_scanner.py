@@ -6,6 +6,10 @@ Surfaces markets with tight spreads in hard-to-model event categories:
 political personalities, executive/CEO moves, celebrity events,
 geopolitical developments, legal rulings, and company-specific events.
 
+Each market is also classified by kind (event / election / numeric / recurring)
+from Kalshi's strike_type and series frequency, so discrete news-driven
+questions can be separated from threshold and data-release markets.
+
 Usage:
     python kalshi_scanner.py [options]
     python kalshi_scanner.py --help
@@ -123,6 +127,62 @@ MODELABLE_KEYWORDS: list[str] = [
 
 MODELABLE_CATEGORIES: set[str] = {"Sports"}
 
+# ── Market kind ───────────────────────────────────────────────────────────────
+# Structural classification from API fields rather than title keywords:
+#   event     — discrete, news-driven yes/no ("Will Kash Patel be out as FBI Director?")
+#   election  — poll-driven race outcomes ("Will Republicans win the Senate race in Ohio?")
+#   numeric   — threshold on a measured quantity ("Will average gas prices be above $4.47?")
+#               or a macro/market-data question (central-bank decisions, CPI, "X outperforms Y")
+#   recurring — part of a daily/weekly/monthly data-release series
+MARKET_KINDS: tuple[str, ...] = ("event", "election", "numeric", "recurring")
+
+# Kalshi market strike_type values that mean "some number above/below/between a strike".
+NUMERIC_STRIKE_TYPES: set[str] = {
+    "greater", "greater_or_equal", "less", "less_or_equal", "between", "functional",
+}
+
+# Kalshi series frequencies that mean a scheduled, repeating data release.
+RECURRING_FREQUENCIES: set[str] = {
+    "fifteen_min", "hourly", "daily", "weekly", "monthly", "quarterly",
+}
+
+# Economics/Financials markets written as plain yes/no questions that are still
+# driven by macro data or market prices, not news. Only checked in those two
+# categories so "Will Netflix issue layoffs" or "When will OpenAI IPO" stay events.
+MACRO_CATEGORIES: set[str] = {"Economics", "Financials"}
+MACRO_KEYWORDS: list[str] = [
+    "federal reserve", "central bank", "bank of ", "national bank", "reserve bank",
+    "banco de", "narodowy bank", "monetary policy", "hike rates", "cut rates",
+    "current rate", "bank rate", "overnight rate", "cpi", "inflation", "gdp",
+    "recession", "unemployment", "state of the economy", "fear & greed",
+    "outperform", "circuitbreaker", "circuit breaker",
+]
+
+# Elections markets that turn on news (candidacies, endorsements, dropouts)
+# rather than polls are reclassified as events.
+ELECTION_EVENT_KEYWORDS: list[str] = [
+    "nominee", "nomination", "run for", "running for", "enter the race",
+    "drop out", "drops out", "endorse",
+]
+# ...except nominee × general-election-winner combos, which are still race outcomes.
+ELECTION_EVENT_EXCLUDE: list[str] = ["general election winner"]
+
+
+def classify_kind(strike_type: Optional[str], frequency: Optional[str], category: str, title_blob: str) -> str:
+    if frequency in RECURRING_FREQUENCIES:
+        return "recurring"
+    if strike_type in NUMERIC_STRIKE_TYPES:
+        return "numeric"
+    if category in MACRO_CATEGORIES and any(kw in title_blob for kw in MACRO_KEYWORDS):
+        return "numeric"
+    if category == "Elections":
+        if any(kw in title_blob for kw in ELECTION_EVENT_KEYWORDS) and not any(
+            kw in title_blob for kw in ELECTION_EVENT_EXCLUDE
+        ):
+            return "event"
+        return "election"
+    return "event"
+
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
 # As of the API's dollar-denominated schema, per-market category/subtitle were
@@ -199,6 +259,29 @@ def fetch_all_markets(verbose: bool = True, skip_categories: set[str] = SKIP_CAT
     return markets
 
 
+def fetch_series_frequencies() -> dict[str, str]:
+    """Map series_ticker -> frequency (one_off, daily, weekly, ...). Empty dict on failure."""
+    freqs: dict[str, str] = {}
+    cursor: Optional[str] = None
+    while True:
+        params: dict = {"cursor": cursor} if cursor else {}
+        try:
+            headers = _auth_headers("GET", "/trade-api/v2/series")
+            resp = requests.get(f"{API_BASE}/series", params=params, headers=headers, timeout=120)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Series API error (recurring-series detection disabled): {e}", file=sys.stderr)
+            return freqs
+        data = resp.json()
+        for s in data.get("series", []):
+            if s.get("ticker"):
+                freqs[s["ticker"]] = s.get("frequency", "")
+        cursor = data.get("cursor")
+        if not cursor:
+            return freqs
+        time.sleep(REQUEST_DELAY)
+
+
 # ── Metric computation ────────────────────────────────────────────────────────
 
 
@@ -212,7 +295,7 @@ def _dollars_to_cents(value) -> Optional[float]:
         return None
 
 
-def compute_metrics(raw: dict) -> Optional[dict]:
+def compute_metrics(raw: dict, series_frequencies: Optional[dict[str, str]] = None) -> Optional[dict]:
     """
     Derive trading and classification metrics from a raw Kalshi market record.
     Returns None for markets without valid two-sided quotes.
@@ -286,6 +369,13 @@ def compute_metrics(raw: dict) -> Optional[dict]:
         kw in title_blob for kw in MODELABLE_KEYWORDS
     )
 
+    kind = classify_kind(
+        raw.get("strike_type"),
+        (series_frequencies or {}).get(raw.get("_series_ticker", "")),
+        kalshi_category,
+        title_blob,
+    )
+
     event_ticker = raw.get("event_ticker", "")
     ticker = raw.get("ticker", "")
     # Kalshi's real market URLs are /markets/{series_ticker}/{seo-slug}/{event_ticker},
@@ -317,6 +407,7 @@ def compute_metrics(raw: dict) -> Optional[dict]:
         "open_timestamp": open_timestamp,
         "flags": flags,
         "is_modelable": is_modelable,
+        "kind": kind,
         "url": url,
     }
 
@@ -337,6 +428,7 @@ def apply_filters(
     category: Optional[str],
     interesting_only: bool,
     exclude_modelable: bool,
+    kinds: Optional[set[str]] = None,
 ) -> list[dict]:
     out = []
     for m in markets:
@@ -365,6 +457,8 @@ def apply_filters(
         if interesting_only and not m["flags"]:
             continue
         if exclude_modelable and m["is_modelable"]:
+            continue
+        if kinds is not None and m["kind"] not in kinds:
             continue
         out.append(m)
     return out
@@ -856,6 +950,11 @@ td.market a:focus-visible, thead th:focus-visible {
   color: var(--text-muted);
 }
 
+.kind-n {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 footer {
   padding: 20px clamp(16px, 4vw, 40px) 40px;
   font-size: 11px;
@@ -889,6 +988,10 @@ __STAT_TILES__
     </span>
 __CATEGORY_CHECKBOXES__
   </div>
+  <div class="filter-group" id="kindFilters">
+    <span class="group-label">Type</span>
+__KIND_CHECKBOXES__
+  </div>
   <div class="filter-group" id="spreadFilters">
     <span class="group-label">Max spread</span>
     <label><input type="radio" name="spread" value="0.5" /> ≤0.5¢</label>
@@ -921,6 +1024,7 @@ __CATEGORY_CHECKBOXES__
       <th data-type="num" data-key="open_ts">Listed<span class="arrow">▼</span></th>
       <th data-type="text" data-key="market">Market<span class="arrow">▼</span></th>
       <th data-type="text" data-key="category">Category<span class="arrow">▼</span></th>
+      <th data-type="text" data-key="kind">Type<span class="arrow">▼</span></th>
       <th class="num" data-type="num" data-key="spread">Spread<span class="arrow">▼</span></th>
       <th class="num" data-type="num" data-key="rel">Rel %<span class="arrow">▼</span></th>
       <th class="num" data-type="num" data-key="bid">Bid<span class="arrow">▼</span></th>
@@ -981,6 +1085,7 @@ __TABLE_ROWS__
   var showingCount = document.getElementById('showingCount');
   var totalRows = tbody.rows.length;
   var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('#categoryFilters input[type=checkbox]'));
+  var kindBoxes = Array.prototype.slice.call(document.querySelectorAll('#kindFilters input[type=checkbox]'));
   var spreadRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=spread]'));
   var volumeRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=volume]'));
   var closesRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=closes]'));
@@ -1003,6 +1108,7 @@ __TABLE_ROWS__
 
   function applyToggles() {
     var cats = checkedValues(categoryBoxes);
+    var kinds = checkedValues(kindBoxes);
     var maxSpread = checkedNumber(spreadRadios);
     var minVolume = checkedNumber(volumeRadios);
     var closesWindow = checkedString(closesRadios);
@@ -1013,6 +1119,7 @@ __TABLE_ROWS__
         || (closesWindow === 'within' && closesDays <= 365)
         || (closesWindow === 'beyond' && closesDays > 365);
       var show = cats[r.getAttribute('data-category')]
+        && kinds[r.getAttribute('data-kind')]
         && parseFloat(r.getAttribute('data-spread')) <= maxSpread
         && parseFloat(r.getAttribute('data-volume')) >= minVolume
         && closesOk;
@@ -1022,7 +1129,7 @@ __TABLE_ROWS__
     showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> of ' + totalRows.toLocaleString() + ' markets match';
   }
 
-  categoryBoxes.concat(spreadRadios, volumeRadios, closesRadios).forEach(function (b) {
+  categoryBoxes.concat(kindBoxes, spreadRadios, volumeRadios, closesRadios).forEach(function (b) {
     b.addEventListener('change', applyToggles);
   });
 
@@ -1080,6 +1187,7 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'data-open_ts="{m.get("open_timestamp", 0)}" '
             f'data-market="{html.escape(m["title"].lower())}" '
             f'data-category="{category_key}" '
+            f'data-kind="{html.escape(m["kind"])}" '
             f'data-spread="{m["spread"]}" '
             f'data-rel="{m["relative_spread"] if m["relative_spread"] is not None else -1}" '
             f'data-bid="{m["yes_bid"]}" '
@@ -1093,6 +1201,7 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
             f'<span class="title">{title_esc}</span>'
             f'<span class="ticker">{ticker_esc}</span></a></td>\n'
             f'      <td class="cat">{html.escape(m["category"] or "—")}</td>\n'
+            f'      <td class="cat">{html.escape(m["kind"])}</td>\n'
             f'      <td class="num"><span class="pill {pill}">{_fmt_cents(m["spread"])}</span></td>\n'
             f'      <td class="num mono">{rel}</td>\n'
             f'      <td class="num mono">{_fmt_cents(m["yes_bid"])}</td>\n'
@@ -1119,6 +1228,14 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
         for cat in sorted(set(m["category"] or "—" for m in markets))
     )
 
+    # Only discrete news-driven events are shown by default; the rest are one click away.
+    kind_counts = {k: sum(1 for m in markets if m["kind"] == k) for k in MARKET_KINDS}
+    kind_checkboxes = "".join(
+        f'    <label><input type="checkbox" value="{k}"{" checked" if k == "event" else ""} /> '
+        f'{k.capitalize()} <span class="kind-n">{kind_counts[k]:,}</span></label>\n'
+        for k in MARKET_KINDS
+    )
+
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
     out = (
         _DASHBOARD_TEMPLATE
@@ -1127,6 +1244,7 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
         .replace("__GENERATED_AT__", generated_at)
         .replace("__STAT_TILES__", stat_tiles)
         .replace("__CATEGORY_CHECKBOXES__", category_checkboxes)
+        .replace("__KIND_CHECKBOXES__", kind_checkboxes)
         .replace("__FILTER_SUMMARY__", html.escape(filter_summary))
         .replace("__TABLE_ROWS__", "\n".join(row_html))
         .replace("__ROW_COUNT__", f"{len(markets):,}")
@@ -1191,6 +1309,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exclude sports and macro-economic markets",
     )
     p.add_argument(
+        "--kind", type=str, metavar="KINDS",
+        help="Comma-separated market kinds to keep: " + ", ".join(MARKET_KINDS)
+             + " (default: all). e.g. --kind event for discrete news-driven markets only",
+    )
+    p.add_argument(
         "--no-interesting-view", action="store_true",
         help="Skip the second 'flagged markets' table",
     )
@@ -1238,7 +1361,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    kinds: Optional[set[str]] = None
+    if args.kind:
+        kinds = {k.strip() for k in args.kind.split(",") if k.strip()}
+        unknown = kinds - set(MARKET_KINDS)
+        if unknown:
+            parser.error(f"unknown --kind value(s): {', '.join(sorted(unknown))} (choose from {', '.join(MARKET_KINDS)})")
 
     skip = set(SKIP_CATEGORIES)
     if args.include_sports:
@@ -1255,8 +1385,11 @@ def main() -> None:
     raw_markets = fetch_all_markets(verbose=True, skip_categories=skip, max_pages=args.max_pages)
     print(f"\nTotal kept: {len(raw_markets):,}", file=sys.stderr)
 
+    print("Fetching series frequencies…", file=sys.stderr)
+    series_frequencies = fetch_series_frequencies()
+
     # Compute metrics and drop markets without valid quotes
-    markets = [m for r in raw_markets if (m := compute_metrics(r)) is not None]
+    markets = [m for r in raw_markets if (m := compute_metrics(r, series_frequencies)) is not None]
     print(f"Markets with valid two-sided quotes: {len(markets):,}", file=sys.stderr)
 
     # Primary sort: absolute spread, then relative spread
@@ -1279,8 +1412,11 @@ def main() -> None:
         category=args.category,
         interesting_only=args.interesting_only,
         exclude_modelable=args.exclude_modelable,
+        kinds=kinds,
     )
-    print(f"After filters: {len(filtered):,} markets\n", file=sys.stderr)
+    print(f"After filters: {len(filtered):,} markets", file=sys.stderr)
+    kind_counts = {k: sum(1 for m in filtered if m["kind"] == k) for k in MARKET_KINDS}
+    print("  by kind: " + " · ".join(f"{k} {n:,}" for k, n in kind_counts.items()) + "\n", file=sys.stderr)
 
     # ── View 1: all filtered markets ─────────────────────────────────────────
     spread_desc = f"≤{max_spread}¢" if max_spread is not None else "all spreads"
@@ -1326,6 +1462,8 @@ def main() -> None:
             filter_bits.append("flagged-interesting only")
         if args.exclude_modelable:
             filter_bits.append("excluding modelable")
+        if kinds is not None:
+            filter_bits.append("kind: " + ", ".join(k for k in MARKET_KINDS if k in kinds))
         export_html(filtered, args.export_html, " · ".join(filter_bits))
 
 
