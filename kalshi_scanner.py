@@ -1076,6 +1076,10 @@ __STAT_TILES__
 <div class="filters">__FILTER_SUMMARY__</div>
 
 <div class="filter-panel">
+  <div class="filter-group" id="relFilters">
+    <span class="group-label">Rel. spread</span>
+    <label><input type="checkbox" id="includeWideRel" /> Include markets with relative spread over 10%</label>
+  </div>
   <div class="filter-group" id="categoryFilters">
     <span class="group-label">Category</span>
     <span class="group-actions">
@@ -1094,11 +1098,6 @@ __KIND_CHECKBOXES__
     <label><input type="radio" name="spread" value="2" checked /> ≤2¢</label>
     <label><input type="radio" name="spread" value="3" /> ≤3¢</label>
     <label><input type="radio" name="spread" value="Infinity" /> Any</label>
-  </div>
-  <div class="filter-group" id="relFilters">
-    <span class="group-label">Rel. spread</span>
-    <label><input type="checkbox" id="includeWideRel" /> Include markets with relative spread over 10%</label>
-    <span class="cat-note">Spread ÷ price. Mostly cheap longshots, where even a 1¢ spread is a big share of the price.</span>
   </div>
   <div class="filter-group" id="volumeFilters">
     <span class="group-label">Min volume</span>
@@ -1457,10 +1456,6 @@ def export_html(markets: list[dict], path: str, filter_summary: str) -> None:
     if off_categories:
         category_checkboxes += '    <span class="cat-divider" aria-hidden="true"></span>\n'
         category_checkboxes += "".join(_category_checkbox(c, False) for c in off_categories)
-        category_checkboxes += (
-            '    <span class="cat-note">Off by default: mostly awards, reality TV and chart rankings, '
-            "not news-driven</span>\n"
-        )
 
     # Only discrete news-driven events are shown by default; the rest are one click away.
     kind_counts = {k: sum(1 for m in markets if m["kind"] == k) for k in MARKET_KINDS}
