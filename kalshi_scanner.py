@@ -1096,11 +1096,9 @@ __KIND_CHECKBOXES__
     <label><input type="radio" name="spread" value="Infinity" /> Any</label>
   </div>
   <div class="filter-group" id="relFilters">
-    <span class="group-label">Max rel. spread</span>
-    <label><input type="radio" name="rel" value="0.10" checked /> ≤10%</label>
-    <label><input type="radio" name="rel" value="0.25" /> ≤25%</label>
-    <label><input type="radio" name="rel" value="Infinity" /> Any</label>
-    <span class="cat-note">Spread ÷ price. Hides cheap longshots, where even a 1¢ spread is a big share of the price.</span>
+    <span class="group-label">Rel. spread</span>
+    <label><input type="checkbox" id="includeWideRel" /> Include markets with relative spread over 10%</label>
+    <span class="cat-note">Spread ÷ price. Mostly cheap longshots, where even a 1¢ spread is a big share of the price.</span>
   </div>
   <div class="filter-group" id="volumeFilters">
     <span class="group-label">Min volume</span>
@@ -1227,7 +1225,7 @@ __TABLE_ROWS__
   var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('#categoryFilters input[type=checkbox]'));
   var kindBoxes = Array.prototype.slice.call(document.querySelectorAll('#kindFilters input[type=checkbox]'));
   var spreadRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=spread]'));
-  var relRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=rel]'));
+  var includeWideRel = document.getElementById('includeWideRel');
   var volumeRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=volume]'));
   var closesRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=closes]'));
 
@@ -1251,7 +1249,7 @@ __TABLE_ROWS__
     var cats = checkedValues(categoryBoxes);
     var kinds = checkedValues(kindBoxes);
     var maxSpread = checkedNumber(spreadRadios);
-    var maxRel = checkedNumber(relRadios);
+    var maxRel = includeWideRel.checked ? Infinity : 0.10;
     var minVolume = checkedNumber(volumeRadios);
     var closesWindow = checkedString(closesRadios);
     var starredView = view === 'starred';
@@ -1344,7 +1342,7 @@ __TABLE_ROWS__
     applyToggles();
   });
 
-  categoryBoxes.concat(kindBoxes, spreadRadios, relRadios, volumeRadios, closesRadios).forEach(function (b) {
+  categoryBoxes.concat(kindBoxes, spreadRadios, [includeWideRel], volumeRadios, closesRadios).forEach(function (b) {
     b.addEventListener('change', applyToggles);
   });
 
