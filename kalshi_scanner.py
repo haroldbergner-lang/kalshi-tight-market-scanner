@@ -929,6 +929,8 @@ button.star:focus-visible {
   align-self: center;
 }
 
+.tabs .tab-actions[hidden] { display: none; }
+
 .filter-panel.inactive { opacity: 0.45; }
 
 .empty-state {
@@ -1093,6 +1095,13 @@ __KIND_CHECKBOXES__
     <label><input type="radio" name="spread" value="3" /> ≤3¢</label>
     <label><input type="radio" name="spread" value="Infinity" /> Any</label>
   </div>
+  <div class="filter-group" id="relFilters">
+    <span class="group-label">Max rel. spread</span>
+    <label><input type="radio" name="rel" value="0.10" checked /> ≤10%</label>
+    <label><input type="radio" name="rel" value="0.25" /> ≤25%</label>
+    <label><input type="radio" name="rel" value="Infinity" /> Any</label>
+    <span class="cat-note">Spread ÷ price. Hides cheap longshots, where even a 1¢ spread is a big share of the price.</span>
+  </div>
   <div class="filter-group" id="volumeFilters">
     <span class="group-label">Min volume</span>
     <label><input type="radio" name="volume" value="5000" checked /> ≥5K</label>
@@ -1218,6 +1227,7 @@ __TABLE_ROWS__
   var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('#categoryFilters input[type=checkbox]'));
   var kindBoxes = Array.prototype.slice.call(document.querySelectorAll('#kindFilters input[type=checkbox]'));
   var spreadRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=spread]'));
+  var relRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=rel]'));
   var volumeRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=volume]'));
   var closesRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=closes]'));
 
@@ -1241,6 +1251,7 @@ __TABLE_ROWS__
     var cats = checkedValues(categoryBoxes);
     var kinds = checkedValues(kindBoxes);
     var maxSpread = checkedNumber(spreadRadios);
+    var maxRel = checkedNumber(relRadios);
     var minVolume = checkedNumber(volumeRadios);
     var closesWindow = checkedString(closesRadios);
     var starredView = view === 'starred';
@@ -1253,6 +1264,7 @@ __TABLE_ROWS__
       var passes = cats[r.getAttribute('data-category')]
         && kinds[r.getAttribute('data-kind')]
         && parseFloat(r.getAttribute('data-spread')) <= maxSpread
+        && parseFloat(r.getAttribute('data-rel')) <= maxRel
         && parseFloat(r.getAttribute('data-volume')) >= minVolume
         && closesOk;
       var show = starredView ? isStarred(r) : passes;
@@ -1332,7 +1344,7 @@ __TABLE_ROWS__
     applyToggles();
   });
 
-  categoryBoxes.concat(kindBoxes, spreadRadios, volumeRadios, closesRadios).forEach(function (b) {
+  categoryBoxes.concat(kindBoxes, spreadRadios, relRadios, volumeRadios, closesRadios).forEach(function (b) {
     b.addEventListener('change', applyToggles);
   });
 

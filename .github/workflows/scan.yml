@@ -34,7 +34,6 @@ jobs:
         run: |
           python3 kalshi_scanner.py \
             --max-spread 10 \
-            --max-relative-spread 10 \
             --min-volume 5000 \
             --max-price 98 \
             --rows 100 \
