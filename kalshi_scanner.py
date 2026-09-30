@@ -885,6 +885,17 @@ button.star:focus-visible {
   outline-offset: 2px;
 }
 
+/* Starred markets that dropped out of the scan (settled, closed, or outside its filters) */
+tr.gone td:not(.star-cell) { opacity: 0.55; }
+
+.gone-note {
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
 .tabs {
   display: flex;
   align-items: flex-end;
@@ -1175,6 +1186,68 @@ __TABLE_ROWS__
     try { localStorage.setItem(STAR_KEY, JSON.stringify(Object.keys(starred))); } catch (e) {}
   }
 
+  // Last-seen copy of each starred row, so a market that leaves the scan (e.g. settles)
+  // stays on the Starred tab with the data it had when it was last scanned.
+  var SNAP_KEY = 'kalshiScanner.starredRows.v1';
+  var GENERATED_AT = '__GENERATED_AT__';
+  var snaps = {};
+  try { snaps = JSON.parse(localStorage.getItem(SNAP_KEY) || '{}') || {}; } catch (e) { snaps = {}; }
+
+  function saveSnaps() {
+    try { localStorage.setItem(SNAP_KEY, JSON.stringify(snaps)); } catch (e) {}
+  }
+
+  function snapRow(r) {
+    var copy = r.cloneNode(true);
+    copy.removeAttribute('style');
+    snaps[r.getAttribute('data-ticker')] = { html: copy.outerHTML, seen: GENERATED_AT };
+  }
+
+  function isGone(r) { return r.hasAttribute('data-gone'); }
+
+  function goneRow(t) {
+    var snap = snaps[t];
+    var r;
+    if (snap && snap.html) {
+      var tmp = document.createElement('tbody');
+      tmp.innerHTML = snap.html;
+      r = tmp.rows[0];
+    }
+    if (!r) {
+      // Starred before rows were remembered: only the ticker is known.
+      var series = t.split('-')[0].toLowerCase();
+      r = document.createElement('tr');
+      r.setAttribute('data-ticker', t);
+      r.setAttribute('data-market', t.toLowerCase());
+      r.setAttribute('data-category', '—');
+      r.setAttribute('data-kind', '—');
+      ['open_ts', 'spread', 'rel', 'bid', 'ask', 'volume', 'oi', 'closes'].forEach(function (k) {
+        r.setAttribute('data-' + k, '-1');
+      });
+      r.innerHTML = '<td class="star-cell"><button type="button" class="star" aria-pressed="false" '
+        + 'aria-label="Star this market" title="Star">☆</button></td>'
+        + '<td class="mono">—</td><td class="mono">—</td>'
+        + '<td class="market"><a target="_blank" rel="noopener"><span class="title"></span>'
+        + '<span class="ticker"></span></a></td>'
+        + '<td class="cat">—</td><td class="cat">—</td>'
+        + '<td class="num">—</td><td class="num mono">—</td><td class="num mono">—</td>'
+        + '<td class="num mono">—</td><td class="num mono">—</td><td class="num mono">—</td>';
+      var a = r.querySelector('td.market a');
+      a.href = 'https://kalshi.com/markets/' + encodeURIComponent(series);
+      a.querySelector('.title').textContent = t;
+      a.querySelector('.ticker').textContent = t;
+    }
+    r.classList.add('gone');
+    r.setAttribute('data-gone', '1');
+    var note = document.createElement('span');
+    note.className = 'gone-note';
+    note.textContent = snap && snap.seen
+      ? 'No longer in the scan · last seen ' + snap.seen + ' UTC'
+      : 'No longer in the scan (likely settled or closed)';
+    r.querySelector('td.market a').appendChild(note);
+    return r;
+  }
+
   function isStarred(r) { return !!starred[r.getAttribute('data-ticker')]; }
 
   function paintStar(r) {
@@ -1215,12 +1288,24 @@ __TABLE_ROWS__
     });
   });
 
+  var onPage = {};
+  Array.prototype.forEach.call(tbody.rows, function (r) {
+    var t = r.getAttribute('data-ticker');
+    onPage[t] = true;
+    if (starred[t]) snapRow(r);
+  });
+  var totalRows = tbody.rows.length;
+  Object.keys(starred).forEach(function (t) {
+    if (!onPage[t]) tbody.appendChild(goneRow(t));
+  });
+  Object.keys(snaps).forEach(function (t) { if (!starred[t]) delete snaps[t]; });
+  saveSnaps();
+
   Array.prototype.forEach.call(tbody.rows, paintStar);
   applySort('closes', 1, 'num');
   ths[0].classList.add('sorted');
 
   var showingCount = document.getElementById('showingCount');
-  var totalRows = tbody.rows.length;
   var categoryBoxes = Array.prototype.slice.call(document.querySelectorAll('#categoryFilters input[type=checkbox]'));
   var kindBoxes = Array.prototype.slice.call(document.querySelectorAll('#kindFilters input[type=checkbox]'));
   var spreadRadios = Array.prototype.slice.call(document.querySelectorAll('input[name=spread]'));
@@ -1264,20 +1349,18 @@ __TABLE_ROWS__
         && parseFloat(r.getAttribute('data-rel')) <= maxRel
         && parseFloat(r.getAttribute('data-volume')) >= minVolume
         && closesOk;
-      var show = starredView ? isStarred(r) : passes;
+      var show = starredView ? isStarred(r) : (passes && !isGone(r));
       r.style.display = show ? '' : 'none';
       if (show) visible++;
     });
 
     // Starred tickers missing from this scan (spread/volume/price now outside the scan's filters, or closed).
-    var onPage = {};
-    Array.prototype.forEach.call(tbody.rows, function (r) { onPage[r.getAttribute('data-ticker')] = true; });
     var starredTickers = Object.keys(starred);
     var missing = starredTickers.filter(function (t) { return !onPage[t]; }).length;
     starCount.textContent = starredTickers.length.toLocaleString();
     if (starredView) {
       showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> starred'
-        + (missing ? ' · ' + missing + ' not in this scan' : '');
+        + (missing ? ' · ' + missing + ' no longer in the scan' : '');
     } else {
       showingCount.innerHTML = '<span class="n">' + visible.toLocaleString() + '</span> of ' + totalRows.toLocaleString() + ' markets match';
     }
@@ -1314,8 +1397,15 @@ __TABLE_ROWS__
     if (!btn) return;
     var r = btn.closest('tr');
     var t = r.getAttribute('data-ticker');
-    if (starred[t]) delete starred[t]; else starred[t] = true;
+    if (starred[t]) {
+      delete starred[t];
+      delete snaps[t];
+    } else {
+      starred[t] = true;
+      if (!isGone(r)) snapRow(r);
+    }
     saveStars();
+    saveSnaps();
     paintStar(r);
     applyToggles();
   });
@@ -1336,7 +1426,9 @@ __TABLE_ROWS__
     var n = Object.keys(starred).length;
     if (!n || !window.confirm('Unstar all ' + n + ' markets?')) return;
     starred = {};
+    snaps = {};
     saveStars();
+    saveSnaps();
     Array.prototype.forEach.call(tbody.rows, paintStar);
     applyToggles();
   });
